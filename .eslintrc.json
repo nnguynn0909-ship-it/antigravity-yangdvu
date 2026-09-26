@@ -1,0 +1,163 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2020,
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "plugins": [
+    "@typescript-eslint"
+  ],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended"
+  ],
+  "env": {
+    "node": true,
+    "es2020": true
+  },
+  "rules": {
+    // TypeScript 特定规则
+    "@typescript-eslint/naming-convention": [
+      "warn",
+      {
+        "selector": "default",
+        "format": ["camelCase"]
+      },
+      {
+        "selector": "variable",
+        "format": ["camelCase", "UPPER_CASE", "PascalCase"],
+        "leadingUnderscore": "allow"
+      },
+      {
+        "selector": "parameter",
+        "format": ["camelCase"],
+        "leadingUnderscore": "allow"
+      },
+      {
+        "selector": "typeLike",
+        "format": ["PascalCase"]
+      },
+      {
+        "selector": "enumMember",
+        "format": ["PascalCase"]
+      },
+      {
+        "selector": "property",
+        "format": null,
+        "filter": {
+          "regex": "^(Content-Type|Content-Length|X-[A-Za-z-]+|Connect-[A-Za-z-]+|CommandLine)$",
+          "match": true
+        }
+      },
+      {
+        "selector": "property",
+        "format": null,
+        "filter": {
+          "regex": "\\.",
+          "match": true
+        }
+      },
+      {
+        "selector": "property",
+        "format": null,
+        "filter": {
+          "regex": "-",
+          "match": true
+        }
+      },
+      {
+        "selector": "property",
+        "format": ["camelCase", "snake_case", "UPPER_CASE", "PascalCase"],
+        "leadingUnderscore": "allow"
+      },
+      {
+        "selector": "typeAlias",
+        "format": ["PascalCase", "snake_case"]
+      },
+      {
+        "selector": "variable",
+        "modifiers": ["const", "exported"],
+        "format": ["camelCase", "UPPER_CASE", "PascalCase", "snake_case"]
+      }
+    ],
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ],
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-non-null-assertion": "off",
+    
+    // 通用规则
+    "semi": ["error", "always"],
+    "quotes": ["warn", "single", { "avoidEscape": true }],
+    "indent": ["warn", 4, { "SwitchCase": 1 }],
+    "no-console": "off",
+    "eqeqeq": ["error", "always"],
+    "curly": ["error", "all"],
+    "no-throw-literal": "error",
+    "prefer-const": "warn",
+    "no-var": "error",
+    
+    // 代码风格
+    "comma-dangle": ["warn", "always-multiline"],
+    "object-curly-spacing": ["warn", "always"],
+    "array-bracket-spacing": ["warn", "never"],
+    "space-before-function-paren": ["warn", {
+      "anonymous": "always",
+      "named": "never",
+      "asyncArrow": "always"
+    }]
+  },
+  "overrides": [
+    {
+      "files": ["src/view/webview/*.js"],
+      "parser": "espree",
+      "parserOptions": {
+        "ecmaVersion": 2020,
+        "sourceType": "module",
+        "project": null
+      },
+      "env": {
+        "browser": true,
+        "es2020": true
+      },
+      "globals": {
+        "acquireVsCodeApi": "readonly"
+      },
+      "rules": {
+        // 禁用 TypeScript 特定规则
+        "@typescript-eslint/naming-convention": "off",
+        "@typescript-eslint/no-unused-vars": "off",
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-this-alias": "off",
+        // 启用 JS 的 no-undef 规则来检测未定义的函数/变量
+        "no-undef": "error",
+        "no-unused-vars": ["warn", {
+          "argsIgnorePattern": "^_",
+          "varsIgnorePattern": "^_"
+        }],
+        // 放宽一些规则（避免大量风格类错误）
+        "indent": "off",
+        "quotes": "off",
+        "semi": "off",
+        "comma-dangle": "off",
+        "curly": "off",
+        "no-inner-declarations": "off",
+        "no-extra-semi": "off",
+        "prefer-const": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "out",
+    "dist",
+    "node_modules",
+    "**/*.d.ts"
+  ]
+}

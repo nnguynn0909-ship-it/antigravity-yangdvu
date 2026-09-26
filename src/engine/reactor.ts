@@ -1,0 +1,2014 @@
+/**
+ * Antigravity Cockpit - 反应堆核心
+ * 负责与 Antigravity API 通信，获取配额数据
+ */
+
+import * as https from 'https';
+import { 
+    QuotaSnapshot, 
+    ModelQuotaInfo, 
+    PromptCreditsInfo, 
+    ServerUserStatusResponse,
+    ClientModelConfig,
+    QuotaGroup,
+    ScanDiagnostics,
+    UserInfo,
+} from '../shared/types';
+import { logger } from '../shared/log_service';
+import { configService } from '../shared/config_service';
+import { t } from '../shared/i18n';
+import { TIMING, API_ENDPOINTS } from '../shared/constants';
+import { AntigravityError } from '../shared/errors';
+import { cloudCodeClient, CloudCodeAuthError, CloudCodeRequestError } from '../shared/cloudcode_client';
+import { autoTriggerController } from '../auto_trigger/controller';
+import { oauthService, credentialStorage } from '../auto_trigger';
+import { antigravityToolsSyncService } from '../antigravityTools_sync';
+import {
+    readQuotaApiCache,
+    writeQuotaApiCache,
+    isApiCacheValid,
+    type QuotaApiCacheRecord,
+} from '../services/quota_api_cache';
+
+
+interface AuthorizedQuotaInfo {
+    remainingFraction?: number;
+    resetTime?: string;
+}
+
+interface AuthorizedModelInfo {
+    displayName?: string;
+    model?: string;
+    disabled?: boolean;
+    quotaInfo?: AuthorizedQuotaInfo;
+    // 模型能力字段
+    supportsImages?: boolean;
+    supportsVideo?: boolean;
+    supportsThinking?: boolean;
+    thinkingBudget?: number;
+    minThinkingBudget?: number;
+    maxTokens?: number;
+    maxOutputTokens?: number;
+    recommended?: boolean;
+    tagTitle?: string;
+    supportedMimeTypes?: Record<string, boolean>;
+    isInternal?: boolean;
+}
+
+interface AuthorizedModelSortGroup {
+    modelIds?: string[];
+}
+
+interface AuthorizedModelSort {
+    displayName?: string;
+    groups?: AuthorizedModelSortGroup[];
+}
+
+interface AuthorizedQuotaResponse {
+    models?: Record<string, AuthorizedModelInfo>;
+    agentModelSorts?: AuthorizedModelSort[];
+}
+
+export interface AccountQuotaFetchResult {
+    snapshot: QuotaSnapshot;
+    fromApiCacheFile: boolean;
+}
+
+const AUTHORIZED_EXTRA_IMAGE_MODEL_KEY = 'gemini-3-pro-image';
+const AUTHORIZED_EXTRA_IMAGE_MODEL_ID = 'MODEL_PLACEHOLDER_M9';
+type AutoGroupFamily = 'claude' | 'gemini_pro' | 'gemini_flash' | 'gemini_image';
+
+const AUTO_GROUP_GEMINI_PRO_ID_PATTERN = /^gemini-\d+(?:\.\d+)?-pro-(high|low)(?:-|$)/;
+const AUTO_GROUP_GEMINI_FLASH_ID_PATTERN = /^gemini-\d+(?:\.\d+)?-flash(?:-|$)/;
+const AUTO_GROUP_GEMINI_IMAGE_ID_PATTERN = /^gemini-\d+(?:\.\d+)?-pro-image(?:-|$)/;
+
+const AUTO_GROUP_GEMINI_PRO_LABEL_PATTERN = /^gemini \d+(?:\.\d+)? pro(?: \((high|low)\)| (high|low))\b/;
+const AUTO_GROUP_GEMINI_FLASH_LABEL_PATTERN = /^gemini \d+(?:\.\d+)? flash\b/;
+const AUTO_GROUP_GEMINI_IMAGE_LABEL_PATTERN = /^gemini \d+(?:\.\d+)? pro image\b/;
+
+const AUTO_GROUP_CLAUDE_ID_SET = new Set(
+    [
+        'MODEL_CLAUDE_4_5_SONNET',
+        'MODEL_CLAUDE_4_5_SONNET_THINKING',
+        'MODEL_PLACEHOLDER_M12',
+        'MODEL_PLACEHOLDER_M26',
+        'MODEL_PLACEHOLDER_M35',
+        'MODEL_OPENAI_GPT_OSS_120B_MEDIUM',
+    ].map(id => id.toLowerCase()),
+);
+
+const AUTO_GROUP_GEMINI_PRO_ID_SET = new Set(
+    [
+        'MODEL_PLACEHOLDER_M7',
+        'MODEL_PLACEHOLDER_M8',
+        'MODEL_PLACEHOLDER_M36',
+        'MODEL_PLACEHOLDER_M37',
+    ].map(id => id.toLowerCase()),
+);
+
+const AUTO_GROUP_GEMINI_FLASH_ID_SET = new Set(
+    [
+        'MODEL_PLACEHOLDER_M18',
+    ].map(id => id.toLowerCase()),
+);
+
+const AUTO_GROUP_GEMINI_IMAGE_ID_SET = new Set(
+    [
+        'MODEL_PLACEHOLDER_M9',
+    ].map(id => id.toLowerCase()),
+);
+
+const AUTO_GROUP_FAMILY_DISPLAY_NAMES: Record<AutoGroupFamily, string> = {
+    claude: 'Claude',
+    gemini_pro: 'Gemini Pro',
+    gemini_flash: 'Gemini Flash',
+    gemini_image: 'Gemini Image',
+};
+
+const AUTO_GROUP_FAMILY_ORDER: AutoGroupFamily[] = ['claude', 'gemini_pro', 'gemini_flash', 'gemini_image'];
+
+function normalizeAutoGroupMatchText(value: string | undefined): string {
+    return (value || '')
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function resolveAutoGroupFamily(modelId: string, label?: string): AutoGroupFamily | null {
+    const normalizedId = modelId.trim().toLowerCase();
+    if (!normalizedId) {
+        return null;
+    }
+    const normalizedLabel = normalizeAutoGroupMatchText(label || modelId);
+
+    if (
+        AUTO_GROUP_GEMINI_IMAGE_ID_SET.has(normalizedId)
+        || AUTO_GROUP_GEMINI_IMAGE_ID_PATTERN.test(normalizedId)
+        || AUTO_GROUP_GEMINI_IMAGE_LABEL_PATTERN.test(normalizedLabel)
+    ) {
+        return 'gemini_image';
+    }
+
+    if (
+        AUTO_GROUP_GEMINI_PRO_ID_SET.has(normalizedId)
+        || AUTO_GROUP_GEMINI_PRO_ID_PATTERN.test(normalizedId)
+        || AUTO_GROUP_GEMINI_PRO_LABEL_PATTERN.test(normalizedLabel)
+    ) {
+        return 'gemini_pro';
+    }
+
+    if (
+        AUTO_GROUP_GEMINI_FLASH_ID_SET.has(normalizedId)
+        || AUTO_GROUP_GEMINI_FLASH_ID_PATTERN.test(normalizedId)
+        || AUTO_GROUP_GEMINI_FLASH_LABEL_PATTERN.test(normalizedLabel)
+    ) {
+        return 'gemini_flash';
+    }
+
+    if (
+        AUTO_GROUP_CLAUDE_ID_SET.has(normalizedId)
+        || normalizedId.startsWith('claude-')
+        || normalizedId.startsWith('model_claude')
+        || normalizedLabel.startsWith('claude ')
+    ) {
+        return 'claude';
+    }
+
+    return null;
+}
+
+
+/**
+ * 反应堆核心类
+ * 管理与后端 API 的通信
+ */
+export class ReactorCore {
+    private port: number = 0;
+    private token: string = '';
+
+    private updateHandler?: (data: QuotaSnapshot) => void;
+    private errorHandler?: (error: Error) => void;
+    private pulseTimer?: ReturnType<typeof setInterval>;
+    public currentInterval: number = 0;
+    private lastScanDiagnostics?: ScanDiagnostics;
+    
+    /** 上一次的配额快照缓存 */
+    private lastSnapshot?: QuotaSnapshot;
+    /** 上一次快照的来源 */
+    private lastSnapshotSource?: 'local' | 'authorized';
+    /** 上一次的原始 API 响应缓存（用于 reprocess 时重新生成分组） */
+    private lastRawResponse?: ServerUserStatusResponse;
+    /** 上一次的授权配额模型缓存（用于 reprocess 时重新生成分组） */
+    private lastAuthorizedModels?: ModelQuotaInfo[];
+    /** 最近一次成功获取到的授权 Credits（用于缓存重放时避免回退为 --） */
+    private lastAuthorizedAvailableAICredits?: number;
+    /** 本地配额上次拉取时间 */
+    private lastLocalFetchedAt?: number;
+    /** 授权配额上次拉取时间 */
+    private lastAuthorizedFetchedAt?: number;
+    /** 初始化同步重试标识，用于中断本地重试流程 */
+    private initRetryToken: number = 0;
+    /** 本地模式下的账户邮箱（从 state.vscdb 读取） */
+    private localAccountEmail?: string;
+    /** 本地模式是否使用远端 API */
+    private localUsingRemoteApi: boolean = false;
+    /** 上次记录的本地模型列表（避免重复日志） */
+    private lastLoggedLocalModelList?: string;
+    /** 上次记录的授权模型列表（避免重复日志） */
+    private lastLoggedAuthorizedModelList?: string;
+    /** 当前用户在 Antigravity 中选中的模型 ID */
+    private activeModelId?: string;
+
+    constructor() {
+        logger.debug('ReactorCore Online');
+    }
+
+    /**
+     * 启动反应堆，设置连接参数
+     */
+    engage(port: number, token: string, diagnostics?: ScanDiagnostics): void {
+        this.port = port;
+        this.token = token;
+        this.lastScanDiagnostics = diagnostics;
+        logger.info(`Reactor Engaged: :${port}`);
+    }
+
+    /**
+     * 获取最新的配额快照
+     */
+    getLatestSnapshot(): QuotaSnapshot | undefined {
+        return this.lastSnapshot;
+    }
+
+    setActiveModelId(modelId?: string): void {
+        const normalized = modelId?.trim();
+        const next = normalized && normalized.length > 0 ? normalized : undefined;
+        if (this.activeModelId === next) {
+            return;
+        }
+        this.activeModelId = next;
+        if (this.lastSnapshot) {
+            this.lastSnapshot.activeModelId = next;
+        }
+        if (this.updateHandler) {
+            this.reprocess();
+        }
+    }
+
+    public async tryUseQuotaCache(
+        source: 'authorized' | 'local',
+        email: string | null,
+    ): Promise<boolean> {
+        if (source !== 'authorized' || !email) {
+            return false;
+        }
+        const record = await readQuotaApiCache('authorized', email);
+        if (!isApiCacheValid(record)) {
+            return false;
+        }
+        try {
+            const models = this.buildModelsFromAuthorizedResponse(record!.payload as AuthorizedQuotaResponse);
+            if (models.length === 0) {
+                return false;
+            }
+            this.lastAuthorizedModels = models;
+            const telemetry = this.buildSnapshot(
+                models,
+                undefined,
+                undefined,
+                this.getCachedAuthorizedAvailableAICredits(),
+            );
+            this.publishTelemetry(telemetry, 'authorized');
+            return true;
+        } catch (error) {
+            logger.warn(`[QuotaApiCache] Failed to decode cached response: ${error instanceof Error ? error.message : String(error)}`);
+            return false;
+        }
+    }
+
+    /**
+     * 获取指定账号的配额快照
+     * 复用现有的解析、过滤、分组逻辑，确保与 Dashboard 一致
+     * @param email 账号邮箱
+     * @returns 配额快照
+     */
+    async fetchQuotaForAccount(
+        email: string,
+        options?: { forceRefresh?: boolean },
+    ): Promise<QuotaSnapshot> {
+        const result = await this.fetchQuotaForAccountWithSource(email, options);
+        return result.snapshot;
+    }
+
+    public async fetchAvailableAICreditsForAccount(email: string): Promise<number | undefined> {
+        try {
+            const tokenStatus = await oauthService.getAccessTokenStatusForAccount(email);
+            if (tokenStatus.state !== 'ok' || !tokenStatus.token) {
+                return undefined;
+            }
+
+            const credential = await credentialStorage.getCredentialForAccount(email);
+            const projectId = credential?.projectId;
+            const info = projectId
+                ? await cloudCodeClient.loadProjectInfo(tokenStatus.token, {
+                    logLabel: 'AuthorizedQuota',
+                    route: { isGcpTos: credential?.isGcpTos },
+                })
+                : await cloudCodeClient.resolveProjectId(tokenStatus.token, {
+                    logLabel: 'AuthorizedQuota',
+                    route: { isGcpTos: credential?.isGcpTos },
+                });
+
+            if (info.projectId) {
+                await credentialStorage.updateProjectIdForAccount(email, info.projectId);
+            }
+
+            if (!Number.isFinite(info.availableAICredits)) {
+                return undefined;
+            }
+            return Math.max(0, Number(info.availableAICredits));
+        } catch (error) {
+            if (error instanceof CloudCodeAuthError) {
+                throw error;
+            }
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.warn(`[AuthorizedQuota] fetch credits failed for ${email}: ${err.message}`);
+            return undefined;
+        }
+    }
+
+    async fetchQuotaForAccountWithSource(
+        email: string,
+        options?: { forceRefresh?: boolean },
+    ): Promise<AccountQuotaFetchResult> {
+        logger.info(`[ReactorCore] Fetching quota for account: ${email}`);
+
+        try {
+            // 获取该账号的 token
+            const tokenStatus = await oauthService.getAccessTokenStatusForAccount(email);
+            if (tokenStatus.state === 'invalid_grant') {
+                throw new CloudCodeAuthError(`Account ${email}: Authorization expired`);
+            }
+            if (tokenStatus.state !== 'ok' || !tokenStatus.token) {
+                throw new Error(`Account ${email}: Token unavailable (${tokenStatus.state})`);
+            }
+
+            // 获取 projectId
+            const credential = await credentialStorage.getCredentialForAccount(email);
+            let projectId = credential?.projectId;
+            let availableAICredits: number | undefined;
+            try {
+                const info = projectId
+                    ? await cloudCodeClient.loadProjectInfo(tokenStatus.token, {
+                        logLabel: 'AuthorizedQuota',
+                        route: { isGcpTos: credential?.isGcpTos },
+                    })
+                    : await cloudCodeClient.resolveProjectId(tokenStatus.token, {
+                        logLabel: 'AuthorizedQuota',
+                        route: { isGcpTos: credential?.isGcpTos },
+                    });
+
+                if (info.projectId) {
+                    projectId = info.projectId;
+                    await credentialStorage.updateProjectIdForAccount(email, projectId);
+                }
+                if (Number.isFinite(info.availableAICredits)) {
+                    availableAICredits = Math.max(0, Number(info.availableAICredits));
+                }
+            } catch (error) {
+                if (error instanceof CloudCodeAuthError) {
+                    throw error;
+                }
+                const err = error instanceof Error ? error : new Error(String(error));
+                logger.warn(`[AuthorizedQuota] loadCodeAssist failed for ${email}: ${err.message}`);
+            }
+
+            // 获取配额模型（复用现有方法）
+            const modelsResult = await this.fetchAuthorizedQuotaModelsWithSource(
+                tokenStatus.token,
+                projectId,
+                email,
+                options?.forceRefresh ?? false,
+                credential?.isGcpTos,
+            );
+            const models = modelsResult.models;
+
+            // 构建快照（复用现有分组/过滤逻辑）
+            const snapshot = this.buildSnapshot(models, undefined, undefined, availableAICredits);
+            
+            logger.info(`[ReactorCore] Quota for ${email}: ${models.length} models, ${snapshot.groups?.length ?? 0} groups`);
+            return {
+                snapshot,
+                fromApiCacheFile: modelsResult.fromApiCacheFile,
+            };
+        } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            logger.error(`[ReactorCore] Failed to fetch quota for ${email}:`, error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * 发送 HTTP 请求
+     */
+    private async transmit<T>(endpoint: string, payload: object): Promise<T> {
+        return new Promise((resolve, reject) => {
+            // Guard against unengaged reactor
+            if (!this.port) {
+                reject(new AntigravityError('Antigravity Error: System not ready (Reactor not engaged)'));
+                return;
+            }
+
+            const data = JSON.stringify(payload);
+            const opts: https.RequestOptions = {
+                hostname: '127.0.0.1',
+                port: this.port,
+                path: endpoint,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(data),
+                    'Connect-Protocol-Version': '1',
+                    'X-Codeium-Csrf-Token': this.token,
+                },
+                rejectUnauthorized: false,
+                timeout: TIMING.HTTP_TIMEOUT_MS,
+                agent: false, // 绕过代理，直接连接 localhost
+            };
+
+            logger.info(`Transmitting signal to ${endpoint}`, JSON.parse(data));
+
+            const req = https.request(opts, res => {
+                let body = '';
+                res.on('data', c => (body += c));
+                res.on('end', () => {
+                    logger.info(`Signal Received (${res.statusCode}):`, {
+                        statusCode: res.statusCode,
+                        bodyLength: body.length,
+                    });
+                    // logger.debug('Signal Body:', body); // 取消注释以查看完整响应
+
+                    // Check for empty body (often happens during process startup)
+                    if (!body || body.trim().length === 0) {
+                        logger.warn('Received empty response from API');
+                        reject(new Error('Signal Corrupted: Empty response from server'));
+                        return;
+                    }
+
+                    try {
+                        resolve(JSON.parse(body) as T);
+                    } catch (e) {
+                        const error = e instanceof Error ? e : new Error(String(e));
+                        
+                        // Log body preview for diagnosis
+                        const bodyPreview = body.length > 200 ? body.substring(0, 200) + '...' : body;
+                        logger.error(`JSON parse failed. Response preview: ${bodyPreview}`);
+                        
+                        reject(new Error(`Signal Corrupted: ${error.message}`));
+                    }
+                });
+            });
+
+            req.on('error', (e) => reject(new Error(`Connection Failed: ${e.message}`)));
+            req.on('timeout', () => {
+                req.destroy();
+                reject(new AntigravityError('Signal Lost: Request timed out'));
+            });
+
+            req.write(data);
+            req.end();
+        });
+    }
+
+    /**
+     * 注册遥测数据更新回调
+     */
+    onTelemetry(cb: (data: QuotaSnapshot) => void): void {
+        this.updateHandler = cb;
+    }
+
+    /**
+     * 注册故障回调
+     */
+    onMalfunction(cb: (error: Error) => void): void {
+        this.errorHandler = cb;
+    }
+
+    /**
+     * 启动定时同步
+     */
+    startReactor(interval: number): void {
+        this.shutdown();
+        this.currentInterval = interval;
+        logger.info(`Reactor Pulse: ${interval}ms`);
+
+        // 启动时使用带重试的初始化同步，失败会自动重试
+        this.initRetryToken += 1;
+        const retryToken = this.initRetryToken;
+        this.initWithRetry(3, 0, retryToken);
+
+        // 定时同步（失败不重试，等下一个周期自然重试）
+        this.pulseTimer = setInterval(() => {
+            this.syncTelemetry();
+        }, interval);
+    }
+
+    /**
+     * 带重试的初始化同步
+     * 仅在启动时调用，失败会自动重试，用户无感
+     * @param maxRetries 最大重试次数
+     * @param currentRetry 当前重试次数
+     */
+    private async initWithRetry(
+        maxRetries: number = 3,
+        currentRetry: number = 0,
+        retryToken: number = this.initRetryToken,
+    ): Promise<void> {
+        if (retryToken !== this.initRetryToken) {
+            logger.info('Init sync retry canceled');
+            return;
+        }
+        try {
+            await this.syncTelemetryCore();
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            const source = this.getSyncErrorSource(err);
+            const endpoint = source === 'authorized'
+                ? 'v1internal:fetchAvailableModels'
+                : API_ENDPOINTS.GET_USER_STATUS;
+            if (this.shouldIgnoreSyncError(err)) {
+                logger.info(`[ReactorCore] Ignoring ${this.getSyncErrorSource(err)} init error after source switch: ${err.message}`);
+                return;
+            }
+            
+            if (retryToken !== this.initRetryToken) {
+                logger.info('Init sync retry canceled after error');
+                return;
+            }
+            if (currentRetry < maxRetries) {
+                // 还有重试机会，使用指数退避
+                const delay = 2000 * (currentRetry + 1);  // 2s, 4s, 6s
+                const sourceInfo = source ? `source=${source}` : 'source=unknown';
+                const endpointInfo = `endpoint=${endpoint}`;
+                logger.warn(`Init sync failed (${sourceInfo}, ${endpointInfo}), retry ${currentRetry + 1}/${maxRetries} in ${delay}ms: ${err.message}`);
+                
+                await this.delay(delay);
+                return this.initWithRetry(maxRetries, currentRetry + 1, retryToken);
+            }
+            
+            // 超过最大重试次数，触发错误回调
+            const sourceInfo = source ? `source=${source}` : 'source=unknown';
+            const endpointInfo = `endpoint=${endpoint}`;
+            logger.error(`Init sync failed after ${maxRetries} retries (${sourceInfo}, ${endpointInfo}): ${err.message}`);
+            
+            if (this.errorHandler) {
+                this.errorHandler(err);
+            }
+        }
+    }
+
+    /**
+     * 中断初始化重试流程
+     */
+    cancelInitRetry(): void {
+        this.initRetryToken += 1;
+    }
+
+    private wrapSyncError(error: unknown, source: 'local' | 'authorized'): Error {
+        const err = error instanceof Error ? error : new Error(String(error));
+        (err as Error & { source?: string }).source = source;
+        return err;
+    }
+
+    private getSyncErrorSource(error: Error): string | undefined {
+        return (error as Error & { source?: string }).source;
+    }
+
+    private shouldIgnoreSyncError(error: Error): boolean {
+        const source = this.getSyncErrorSource(error);
+        if (!source) {
+            return false;
+        }
+        const currentSource = configService.getConfig().quotaSource === 'authorized' ? 'authorized' : 'local';
+        return source !== currentSource;
+    }
+
+    /**
+     * 延迟指定毫秒数
+     */
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    /**
+     * 关闭反应堆
+     */
+    shutdown(): void {
+        if (this.pulseTimer) {
+            clearInterval(this.pulseTimer);
+            this.pulseTimer = undefined;
+        }
+    }
+
+    /**
+     * 同步遥测数据（用于定时器调用，自带错误处理）
+     */
+    async syncTelemetry(): Promise<void> {
+        try {
+            await this.syncTelemetryCore();
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            if (this.shouldIgnoreSyncError(err)) {
+                logger.info(`[ReactorCore] Ignoring ${this.getSyncErrorSource(err)} sync error after source switch: ${err.message}`);
+                return;
+            }
+            const source = this.getSyncErrorSource(err);
+            const currentSource = configService.getConfig().quotaSource === 'authorized' ? 'authorized' : 'local';
+            const sourceInfo = source ? `source=${source}` : 'source=unknown';
+            const endpoint = source === 'authorized'
+                ? 'v1internal:fetchAvailableModels'
+                : API_ENDPOINTS.GET_USER_STATUS;
+            logger.error(`Telemetry Sync Failed (${sourceInfo}, current=${currentSource}, endpoint=${endpoint}): ${err.message}`);
+            
+            if (this.errorHandler) {
+                this.errorHandler(err);
+            }
+        }
+    }
+
+    /**
+     * 同步遥测数据核心逻辑（可抛出异常，用于重试机制）
+     */
+    private async syncTelemetryCore(): Promise<void> {
+        const config = configService.getConfig();
+        if (config.quotaSource === 'authorized') {
+            // 注意：移除了每次配额刷新时的自动账户切换逻辑
+            // 用户可以通过"切换至当前登录账户"按钮手动触发切换
+            // 这样可以避免用户手动切换账户后被自动覆盖回去的问题
+
+            try {
+                const hasAuth = await credentialStorage.hasValidCredential();
+                if (!hasAuth) {
+                    this.lastAuthorizedModels = undefined;
+                    this.lastAuthorizedFetchedAt = undefined;
+                    const telemetry = ReactorCore.createOfflineSnapshot();
+                    this.publishTelemetry(telemetry, 'authorized');
+                    return;
+                }
+                const telemetry = await this.fetchAuthorizedTelemetry();
+                this.lastAuthorizedFetchedAt = Date.now();
+                this.publishTelemetry(telemetry, 'authorized');
+                return;
+            } catch (error) {
+                if (error instanceof CloudCodeAuthError) {
+                    logger.warn(`[AuthorizedQuota] Authorization invalid: ${error.message}`);
+                    try {
+                        await credentialStorage.deleteCredential();
+                    } catch (deleteError) {
+                        const err = deleteError instanceof Error ? deleteError : new Error(String(deleteError));
+                        logger.warn(`[AuthorizedQuota] Failed to clear credential: ${err.message}`);
+                    }
+                    const telemetry = ReactorCore.createOfflineSnapshot();
+                    this.publishTelemetry(telemetry, 'authorized');
+                    return;
+                }
+
+                if (error instanceof CloudCodeRequestError && error.status === 403) {
+                    logger.warn('[AuthorizedQuota] Access forbidden (403), stopping authorized sync');
+                    const telemetry = ReactorCore.createOfflineSnapshot();
+                    this.publishTelemetry(telemetry, 'authorized');
+                    return;
+                }
+
+                if (error instanceof CloudCodeRequestError && error.retryable) {
+                    if (this.lastAuthorizedModels) {
+                        const cacheAge = this.getCacheAgeMs('authorized');
+                        const ageNote = cacheAge !== undefined ? ` (age=${Math.round(cacheAge / 1000)}s)` : '';
+                        logger.warn(`[AuthorizedQuota] Request failed, using cached models${ageNote}`);
+                        const telemetry = this.buildSnapshot(
+                            this.lastAuthorizedModels,
+                            undefined,
+                            undefined,
+                            this.getCachedAuthorizedAvailableAICredits(),
+                        );
+                        this.publishTelemetry(telemetry, 'authorized');
+                        return;
+                    }
+                    const telemetry = ReactorCore.createOfflineSnapshot();
+                    this.publishTelemetry(telemetry, 'authorized');
+                    return;
+                }
+
+                throw this.wrapSyncError(error, 'authorized');
+            }
+        }
+
+        // Local 模式：仅使用本地进程 API
+        try {
+            const telemetry = await this.fetchLocalTelemetryWithRemoteFallback();
+            this.publishTelemetry(telemetry, 'local');
+        } catch (error) {
+            throw this.wrapSyncError(error, 'local');
+        }
+    }
+
+    /**
+     * 获取本地配额数据（仅本地进程 API）
+     */
+    private async fetchLocalTelemetryWithRemoteFallback(): Promise<QuotaSnapshot> {
+        logger.info('[LocalQuota] Using local process API');
+        this.localUsingRemoteApi = false;
+        this.localAccountEmail = undefined;
+        return await this.fetchLocalTelemetry();
+    }
+
+    private async fetchLocalTelemetry(): Promise<QuotaSnapshot> {
+        const raw = await this.transmit<ServerUserStatusResponse>(
+            API_ENDPOINTS.GET_USER_STATUS,
+            {
+                metadata: {
+                    ideName: 'antigravity',
+                    extensionName: 'antigravity',
+                    locale: 'en',
+                },
+            },
+        );
+        this.lastRawResponse = raw; // 缓存原始响应
+        this.lastLocalFetchedAt = Date.now();
+        return this.decodeSignal(raw);
+    }
+
+    private async tryFetchLocalTelemetry(): Promise<QuotaSnapshot | null> {
+        if (!this.port || !this.token) {
+            return null;
+        }
+        try {
+            return await this.fetchLocalTelemetry();
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.debug(`[LocalQuota] Local fetch failed: ${err.message}`);
+            return null;
+        }
+    }
+
+    private async resolveToolsAuthorizedEmail(): Promise<string | null> {
+        try {
+            const detection = await antigravityToolsSyncService.detect();
+            if (!detection?.currentEmail) {
+                return null;
+            }
+            return await this.resolveAuthorizedEmail(detection.currentEmail);
+        } catch (error) {
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.debug(`[AuthorizedQuota] Tools detection failed: ${err.message}`);
+            return null;
+        }
+    }
+
+    private async resolveAuthorizedEmail(localEmail: string): Promise<string | null> {
+        const trimmed = localEmail.trim();
+        if (!trimmed || trimmed === 'N/A' || !trimmed.includes('@')) {
+            return null;
+        }
+        const accounts = await credentialStorage.getAllCredentials();
+        const target = trimmed.toLowerCase();
+        for (const email of Object.keys(accounts)) {
+            if (email.toLowerCase() === target) {
+                return email;
+            }
+        }
+        return null;
+    }
+
+    private async ensureActiveAccount(email: string): Promise<void> {
+        const activeAccount = await credentialStorage.getActiveAccount();
+        if (activeAccount && activeAccount.toLowerCase() === email.toLowerCase()) {
+            return;
+        }
+        await credentialStorage.setActiveAccount(email);
+        logger.info(`[AuthorizedQuota] Auto-switched active account to ${email}`);
+    }
+
+    /**
+     * 发布遥测数据到 UI
+     */
+    private publishTelemetry(telemetry: QuotaSnapshot, source?: 'local' | 'authorized'): void {
+        if (source) {
+            const currentSource = configService.getConfig().quotaSource === 'authorized' ? 'authorized' : 'local';
+            if (source !== currentSource) {
+                logger.debug(`[ReactorCore] Skipping ${source} telemetry (current source: ${currentSource})`);
+                return;
+            }
+        }
+        telemetry.activeModelId = this.activeModelId;
+        this.lastSnapshot = telemetry; // Cache the latest snapshot
+        if (source) {
+            this.lastSnapshotSource = source;
+        }
+
+        if (telemetry.models.length > 0) {
+            const maxLabelLen = Math.max(...telemetry.models.map(m => m.label.length));
+            const quotaSummary = telemetry.models.map(m => {
+                const pct = m.remainingPercentage !== undefined ? m.remainingPercentage.toFixed(2) + '%' : 'N/A';
+                return `    ${m.label.padEnd(maxLabelLen)} : ${pct}`;
+            }).join('\n');
+            
+            logger.info(`Quota Update:\n${quotaSummary}`);
+        } else {
+            logger.info('Quota Update: No models available');
+        }
+
+        if (this.updateHandler) {
+            this.updateHandler(telemetry);
+        }
+        
+        // 检查配额重置并触发自动唤醒（异步执行，不阻塞主流程）
+        // 注意：现在 checkQuotaResetTrigger 会自行获取每个选中账号的配额数据
+        this.checkQuotaResetTrigger().catch(err => {
+            logger.warn(`[ReactorCore] Wake on reset check failed: ${err}`);
+        });
+    }
+
+    /**
+     * 获取授权配额并构建快照
+     * @param retryCount 当前重试次数，用于防止账号切换时的无限递归
+     */
+    private async fetchAuthorizedTelemetry(retryCount = 0): Promise<QuotaSnapshot> {
+        // 防止账号频繁切换导致的无限递归
+        const MAX_ACCOUNT_CHANGE_RETRIES = 3;
+        if (retryCount >= MAX_ACCOUNT_CHANGE_RETRIES) {
+            logger.warn('[AuthorizedQuota] Max account change retries reached, returning empty snapshot');
+            return ReactorCore.createOfflineSnapshot();
+        }
+        const tokenResult = await oauthService.getAccessTokenStatus();
+        if (tokenResult.state === 'invalid_grant') {
+            throw new CloudCodeAuthError('Authorization expired');
+        }
+        if (tokenResult.state === 'refresh_failed') {
+            throw new CloudCodeRequestError('Token refresh failed', undefined, true);
+        }
+        if (tokenResult.state !== 'ok' || !tokenResult.token) {
+            throw new Error(t('quotaSource.authorizedMissing') || 'Authorize auto wake-up first');
+        }
+        const accessToken = tokenResult.token;
+        const activeAccount = await credentialStorage.getActiveAccount();
+
+        let projectId: string | undefined;
+        let availableAICredits: number | undefined;
+        const credential = await credentialStorage.getCredential();
+        if (credential?.projectId) {
+            projectId = credential.projectId;
+        }
+
+        try {
+            const info = projectId
+                ? await cloudCodeClient.loadProjectInfo(accessToken, {
+                    logLabel: 'AuthorizedQuota',
+                    route: { isGcpTos: credential?.isGcpTos },
+                })
+                : await cloudCodeClient.resolveProjectId(accessToken, {
+                    logLabel: 'AuthorizedQuota',
+                    route: { isGcpTos: credential?.isGcpTos },
+                });
+
+            if (info.projectId) {
+                projectId = info.projectId;
+                if (credential && credential.projectId !== projectId) {
+                    credential.projectId = projectId;
+                    await credentialStorage.saveCredential(credential);
+                }
+            }
+            if (Number.isFinite(info.availableAICredits)) {
+                availableAICredits = Math.max(0, Number(info.availableAICredits));
+                this.lastAuthorizedAvailableAICredits = availableAICredits;
+            }
+        } catch (error) {
+            if (error instanceof CloudCodeAuthError) {
+                throw error;
+            }
+            const err = error instanceof Error ? error : new Error(String(error));
+            logger.warn(`[AuthorizedQuota] loadCodeAssist failed, continuing without project: ${err.message}`);
+        }
+
+        const models = await this.fetchAuthorizedQuotaModels(
+            accessToken,
+            projectId,
+            activeAccount ?? undefined,
+            false,
+            credential?.isGcpTos,
+        );
+        const activeAccountAfter = await credentialStorage.getActiveAccount();
+        if (this.normalizeAccount(activeAccount) !== this.normalizeAccount(activeAccountAfter)) {
+            logger.info('[AuthorizedQuota] Active account changed during fetch, retrying with new account');
+            this.lastAuthorizedModels = undefined;
+            // 递归重试，获取新账号的配额
+            return this.fetchAuthorizedTelemetry(retryCount + 1);
+        }
+        this.lastAuthorizedModels = models;
+
+        const snapshot = this.buildSnapshot(
+            models,
+            undefined,
+            undefined,
+            Number.isFinite(availableAICredits)
+                ? Math.max(0, Number(availableAICredits))
+                : this.getCachedAuthorizedAvailableAICredits(),
+        );
+        const localSnapshot = await this.tryFetchLocalTelemetry();
+        if (localSnapshot?.promptCredits || localSnapshot?.userInfo) {
+            snapshot.promptCredits = localSnapshot.promptCredits;
+            snapshot.userInfo = localSnapshot.userInfo;
+        }
+
+        return snapshot;
+    }
+
+    private normalizeAccount(value: string | null | undefined): string | null {
+        if (!value) {
+            return null;
+        }
+        const normalized = value.trim().toLowerCase();
+        return normalized ? normalized : null;
+    }
+
+    private getCachedAuthorizedAvailableAICredits(): number | undefined {
+        if (Number.isFinite(this.lastAuthorizedAvailableAICredits)) {
+            return Math.max(0, Number(this.lastAuthorizedAvailableAICredits));
+        }
+
+        const snapshotCredits = this.lastSnapshot?.availableAICredits;
+        if (Number.isFinite(snapshotCredits)) {
+            return Math.max(0, Number(snapshotCredits));
+        }
+
+        return undefined;
+    }
+
+    private resolveAutoGroupFamily(modelId: string, label?: string): AutoGroupFamily | null {
+        return resolveAutoGroupFamily(modelId, label);
+    }
+
+    private buildAutoFamilyGroupMap(groupMappings: Record<string, string>): Partial<Record<AutoGroupFamily, string>> {
+        const familyStats = new Map<AutoGroupFamily, Map<string, number>>();
+
+        for (const [modelId, groupId] of Object.entries(groupMappings)) {
+            if (!groupId) {
+                continue;
+            }
+            const family = this.resolveAutoGroupFamily(modelId);
+            if (!family) {
+                continue;
+            }
+            let groupCounter = familyStats.get(family);
+            if (!groupCounter) {
+                groupCounter = new Map<string, number>();
+                familyStats.set(family, groupCounter);
+            }
+            groupCounter.set(groupId, (groupCounter.get(groupId) || 0) + 1);
+        }
+
+        const familyGroupMap: Partial<Record<AutoGroupFamily, string>> = {};
+        for (const family of ['claude', 'gemini_pro', 'gemini_flash', 'gemini_image'] as AutoGroupFamily[]) {
+            const groupCounter = familyStats.get(family);
+            if (!groupCounter || groupCounter.size === 0) {
+                continue;
+            }
+            let selectedGroupId: string | null = null;
+            let maxCount = -1;
+            for (const [groupId, count] of groupCounter.entries()) {
+                if (count > maxCount) {
+                    selectedGroupId = groupId;
+                    maxCount = count;
+                }
+            }
+            if (selectedGroupId) {
+                familyGroupMap[family] = selectedGroupId;
+            }
+        }
+
+        return familyGroupMap;
+    }
+
+    private getNewModelsComparedToCache(
+        previousCache: QuotaApiCacheRecord | null,
+        latestModels: ModelQuotaInfo[],
+    ): ModelQuotaInfo[] {
+        if (!previousCache?.payload) {
+            return [];
+        }
+        try {
+            const previousModels = this.buildModelsFromAuthorizedResponse(
+                previousCache.payload as AuthorizedQuotaResponse,
+            );
+            const previousIds = new Set(
+                previousModels.map(model => model.modelId.trim().toLowerCase()),
+            );
+            const seen = new Set<string>();
+            return latestModels.filter(model => {
+                const normalizedId = model.modelId.trim().toLowerCase();
+                if (!normalizedId || seen.has(normalizedId)) {
+                    return false;
+                }
+                seen.add(normalizedId);
+                return !previousIds.has(normalizedId);
+            });
+        } catch (error) {
+            logger.warn(
+                `[AutoGroup] Failed to compare api cache payload: ${
+                    error instanceof Error ? error.message : String(error)
+                }`,
+            );
+            return [];
+        }
+    }
+
+    private async autoAssignNewModelsToExistingGroups(
+        previousCache: QuotaApiCacheRecord | null,
+        latestModels: ModelQuotaInfo[],
+    ): Promise<void> {
+        const newModels = this.getNewModelsComparedToCache(previousCache, latestModels);
+        if (newModels.length === 0) {
+            return;
+        }
+
+        const config = configService.getConfig();
+        const existingMappings = config.groupMappings || {};
+        if (Object.keys(existingMappings).length === 0) {
+            logger.info('[AutoGroup] Skip auto-assign: no existing group mappings');
+            return;
+        }
+
+        const familyGroupMap = this.buildAutoFamilyGroupMap(existingMappings);
+        if (Object.keys(familyGroupMap).length === 0) {
+            logger.info('[AutoGroup] Skip auto-assign: no existing family groups found');
+            return;
+        }
+
+        let changedCount = 0;
+        const nextMappings = { ...existingMappings };
+        for (const model of newModels) {
+            if (!model.modelId || nextMappings[model.modelId]) {
+                continue;
+            }
+            const family = this.resolveAutoGroupFamily(model.modelId, model.label);
+            if (!family) {
+                continue;
+            }
+            const targetGroupId = familyGroupMap[family];
+            if (!targetGroupId) {
+                continue;
+            }
+            nextMappings[model.modelId] = targetGroupId;
+            changedCount++;
+            logger.info(
+                `[AutoGroup] Assigned new model "${model.label}" (${model.modelId}) to existing group "${targetGroupId}" (family=${family})`,
+            );
+        }
+
+        if (changedCount === 0) {
+            return;
+        }
+
+        await configService.updateGroupMappings(nextMappings);
+        logger.info(`[AutoGroup] Auto-assigned ${changedCount} new model(s) based on api-cache diff`);
+    }
+
+    private async fetchAuthorizedQuotaModels(
+        accessToken: string,
+        projectId?: string,
+        email?: string,
+        forceRefresh: boolean = false,
+        isGcpTos?: boolean,
+    ): Promise<ModelQuotaInfo[]> {
+        const result = await this.fetchAuthorizedQuotaModelsWithSource(
+            accessToken,
+            projectId,
+            email,
+            forceRefresh,
+            isGcpTos,
+        );
+        return result.models;
+    }
+
+    private async fetchAuthorizedQuotaModelsWithSource(
+        accessToken: string,
+        projectId?: string,
+        email?: string,
+        forceRefresh: boolean = false,
+        isGcpTos?: boolean,
+    ): Promise<{ models: ModelQuotaInfo[]; fromApiCacheFile: boolean }> {
+        let previousCache: QuotaApiCacheRecord | null = null;
+        if (email) {
+            previousCache = await readQuotaApiCache('authorized', email);
+        }
+
+        if (email && !forceRefresh && isApiCacheValid(previousCache)) {
+            try {
+                return {
+                    models: this.buildModelsFromAuthorizedResponse(previousCache!.payload as AuthorizedQuotaResponse),
+                    fromApiCacheFile: true,
+                };
+            } catch (error) {
+                logger.warn(`[QuotaApiCache] Cached response decode failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+
+        logger.info('[AuthorizedQuota] Fetching available models');
+        const data = await cloudCodeClient.fetchAvailableModels(
+            accessToken,
+            projectId,
+            {
+                logLabel: 'AuthorizedQuota',
+                route: { isGcpTos },
+            },
+        ) as AuthorizedQuotaResponse;
+
+        const models = this.buildModelsFromAuthorizedResponse(data);
+
+        if (email) {
+            try {
+                await this.autoAssignNewModelsToExistingGroups(previousCache, models);
+            } catch (error) {
+                logger.warn(`[AutoGroup] Failed to auto-assign new models: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            try {
+                await writeQuotaApiCache({
+                    version: 1,
+                    source: 'authorized',
+                    customSource: 'plugin',
+                    email,
+                    projectId,
+                    updatedAt: Date.now(),
+                    payload: data,
+                });
+            } catch (error) {
+                logger.warn(`[QuotaApiCache] Failed to write cache: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+
+        return {
+            models,
+            fromApiCacheFile: false,
+        };
+    }
+
+    private buildModelsFromAuthorizedResponse(data: AuthorizedQuotaResponse): ModelQuotaInfo[] {
+        const models: ModelQuotaInfo[] = [];
+        const now = Date.now();
+
+        if (!data.models) {
+            return models;
+        }
+
+        const orderedKeys = this.resolveAuthorizedOrderedModelKeys(data);
+        for (const modelKey of orderedKeys) {
+            const info = data.models[modelKey];
+            if (!info) {
+                continue;
+            }
+            if (info.disabled) {
+                continue;
+            }
+
+            const quotaInfo = info.quotaInfo;
+            const rawRemainingFraction = quotaInfo?.remainingFraction;
+            const remainingFraction = typeof rawRemainingFraction === 'number'
+                && rawRemainingFraction >= 0
+                && rawRemainingFraction <= 1
+                ? rawRemainingFraction
+                : undefined;
+
+            let resetTime = new Date(0);
+            let resetTimeValid = false;
+            if (quotaInfo?.resetTime) {
+                const parsed = new Date(quotaInfo.resetTime);
+                if (!Number.isNaN(parsed.getTime())) {
+                    resetTime = parsed;
+                    resetTimeValid = parsed.getTime() > now;
+                } else {
+                    logger.warn(`[AuthorizedQuota] Invalid resetTime for model ${modelKey}: ${quotaInfo.resetTime}`);
+                }
+            }
+
+            const timeUntilReset = resetTimeValid ? Math.max(0, resetTime.getTime() - now) : 0;
+            const modelId = info.model || modelKey;
+            const label = info.displayName?.trim() || modelKey;
+
+            models.push({
+                label,
+                modelId,
+                remainingFraction,
+                remainingPercentage: remainingFraction !== undefined ? remainingFraction * 100 : undefined,
+                isExhausted: remainingFraction === 0,
+                resetTime,
+                resetTimeDisplay: resetTimeValid ? this.formatIso(resetTime) : (t('common.unknown') || 'Unknown'),
+                timeUntilReset,
+                timeUntilResetFormatted: resetTimeValid ? this.formatDelta(timeUntilReset) : (t('dashboard.online') || 'Quota available'),
+                resetTimeValid,
+                supportsImages: info.supportsImages,
+                isRecommended: info.recommended,
+                tagTitle: info.tagTitle,
+                supportedMimeTypes: info.supportedMimeTypes,
+            });
+        }
+
+        this.logModelList('authorized', models);
+        return models;
+    }
+
+    private resolveAuthorizedOrderedModelKeys(data: AuthorizedQuotaResponse): string[] {
+        if (!data.models) {
+            return [];
+        }
+
+        const orderedKeys: string[] = [];
+        const added = new Set<string>();
+
+        for (const sort of data.agentModelSorts ?? []) {
+            for (const group of sort.groups ?? []) {
+                for (const modelIdentifier of group.modelIds ?? []) {
+                    if (!Object.prototype.hasOwnProperty.call(data.models, modelIdentifier)) {
+                        logger.debug(`[AuthorizedQuota] Model ${modelIdentifier} not found in available models`);
+                        continue;
+                    }
+                    if (added.has(modelIdentifier)) {
+                        continue;
+                    }
+                    added.add(modelIdentifier);
+                    orderedKeys.push(modelIdentifier);
+                }
+            }
+        }
+
+        // 在官方列表基础上补入 Gemini 3 Pro Image（若接口返回且未包含）
+        this.pushAuthorizedModelKeyIfExists(
+            data.models,
+            AUTHORIZED_EXTRA_IMAGE_MODEL_KEY,
+            added,
+            orderedKeys,
+        );
+        this.pushAuthorizedModelKeyByModelIdIfExists(
+            data.models,
+            AUTHORIZED_EXTRA_IMAGE_MODEL_ID,
+            added,
+            orderedKeys,
+        );
+
+        if (orderedKeys.length === 0) {
+            logger.warn('[AuthorizedQuota] No model found from available models response');
+        }
+
+        return orderedKeys;
+    }
+
+    private pushAuthorizedModelKeyIfExists(
+        modelMap: Record<string, AuthorizedModelInfo>,
+        modelKey: string,
+        added: Set<string>,
+        orderedKeys: string[],
+    ): void {
+        if (!Object.prototype.hasOwnProperty.call(modelMap, modelKey) || added.has(modelKey)) {
+            return;
+        }
+        added.add(modelKey);
+        orderedKeys.push(modelKey);
+    }
+
+    private pushAuthorizedModelKeyByModelIdIfExists(
+        modelMap: Record<string, AuthorizedModelInfo>,
+        modelId: string,
+        added: Set<string>,
+        orderedKeys: string[],
+    ): void {
+        for (const [modelKey, info] of Object.entries(modelMap)) {
+            if (added.has(modelKey)) {
+                continue;
+            }
+            if ((info.model ?? '').trim() !== modelId) {
+                continue;
+            }
+            added.add(modelKey);
+            orderedKeys.push(modelKey);
+            return;
+        }
+    }
+    /**
+     * 检查配额重置并触发自动唤醒
+     * 现在 AutoTriggerController 会自行遍历所有选中账号并获取配额
+     */
+    private async checkQuotaResetTrigger(): Promise<void> {
+        await autoTriggerController.checkAndTriggerOnQuotaReset();
+    }
+
+    /**
+     * 重新发布最近一次的遥测数据
+     * 用于在配置变更等不需要重新请求 API 的场景下更新 UI
+     */
+    reprocess(): void {
+        const quotaSource = configService.getConfig().quotaSource === 'authorized' ? 'authorized' : 'local';
+        if (quotaSource === 'local' && this.lastRawResponse && this.updateHandler) {
+            logger.info('Reprocessing cached local telemetry data with latest config');
+            const telemetry = this.decodeSignal(this.lastRawResponse);
+            this.publishTelemetry(telemetry, 'local');
+            return;
+        }
+
+        if (quotaSource === 'local' && this.localUsingRemoteApi && this.lastAuthorizedModels && this.updateHandler) {
+            logger.info('Reprocessing cached local(remote API) telemetry data with latest config');
+            const telemetry = this.buildSnapshot(
+                this.lastAuthorizedModels,
+                undefined,
+                undefined,
+                this.getCachedAuthorizedAvailableAICredits(),
+            );
+            if (this.localAccountEmail) {
+                telemetry.localAccountEmail = this.localAccountEmail;
+            }
+            this.publishTelemetry(telemetry, 'local');
+            return;
+        }
+
+        if (quotaSource === 'authorized' && this.lastAuthorizedModels && this.updateHandler) {
+            logger.info('Reprocessing cached authorized telemetry data with latest config');
+            const telemetry = this.buildSnapshot(
+                this.lastAuthorizedModels,
+                undefined,
+                undefined,
+                this.getCachedAuthorizedAvailableAICredits(),
+            );
+            this.publishTelemetry(telemetry, 'authorized');
+            return;
+        }
+
+        if (this.lastSnapshot && this.lastSnapshotSource === quotaSource && this.updateHandler) {
+            logger.info('Reprocessing cached snapshot (no raw response)');
+            this.updateHandler(this.lastSnapshot);
+            return;
+        }
+
+        // 没有可用缓存，触发网络请求获取数据
+        logger.warn('Cannot reprocess: no cached data available, triggering sync');
+        this.syncTelemetry();
+    }
+
+    /**
+     * 检查是否有缓存数据
+     */
+    get hasCache(): boolean {
+        return !!this.lastSnapshot;
+    }
+
+    /**
+     * 获取指定来源缓存的年龄（毫秒）
+     */
+    getCacheAgeMs(source: 'local' | 'authorized'): number | undefined {
+        const lastFetchedAt = source === 'local' ? this.lastLocalFetchedAt : this.lastAuthorizedFetchedAt;
+        if (!lastFetchedAt) {
+            return undefined;
+        }
+        return Date.now() - lastFetchedAt;
+    }
+
+    /**
+     * 立即发布指定来源的缓存数据（不触发网络请求）
+     */
+    publishCachedTelemetry(source: 'local' | 'authorized'): boolean {
+        if (!this.updateHandler) {
+            return false;
+        }
+
+        if (source === 'local' && this.lastRawResponse) {
+            const telemetry = this.decodeSignal(this.lastRawResponse);
+            this.publishTelemetry(telemetry, 'local');
+            return true;
+        }
+
+        if (source === 'local' && this.localUsingRemoteApi && this.lastAuthorizedModels) {
+            const telemetry = this.buildSnapshot(
+                this.lastAuthorizedModels,
+                undefined,
+                undefined,
+                this.getCachedAuthorizedAvailableAICredits(),
+            );
+            if (this.localAccountEmail) {
+                telemetry.localAccountEmail = this.localAccountEmail;
+            }
+            this.publishTelemetry(telemetry, 'local');
+            return true;
+        }
+
+        if (source === 'authorized' && this.lastAuthorizedModels) {
+            const telemetry = this.buildSnapshot(
+                this.lastAuthorizedModels,
+                undefined,
+                undefined,
+                this.getCachedAuthorizedAvailableAICredits(),
+            );
+            this.publishTelemetry(telemetry, 'authorized');
+            return true;
+        }
+
+        if (this.lastSnapshot && this.lastSnapshotSource === source) {
+            this.updateHandler(this.lastSnapshot);
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * 解码服务端响应
+     */
+    private decodeSignal(data: ServerUserStatusResponse): QuotaSnapshot {
+        // 验证响应数据结构
+        if (!data || !data.userStatus) {
+            // 如果服务端返回了错误消息，直接透传给用户，这不属于插件 Bug
+            if (data && typeof data.message === 'string') {
+                throw new AntigravityError(t('error.serverError', { message: data.message }));
+            }
+
+            throw new Error(t('error.invalidResponse', { 
+                details: data ? JSON.stringify(data).substring(0, 100) : 'empty response', 
+            }));
+        }
+        
+        const status = data.userStatus;
+        const plan = status.planStatus?.planInfo;
+        const credits = status.planStatus?.availablePromptCredits;
+
+        let promptCredits: PromptCreditsInfo | undefined;
+
+        if (plan && credits !== undefined) {
+            const monthlyLimit = Number(plan.monthlyPromptCredits);
+            const availableVal = Number(credits);
+
+            if (monthlyLimit > 0) {
+                promptCredits = {
+                    available: availableVal,
+                    monthly: monthlyLimit,
+                    usedPercentage: ((monthlyLimit - availableVal) / monthlyLimit) * 100,
+                    remainingPercentage: (availableVal / monthlyLimit) * 100,
+                };
+            }
+        }
+
+        const userInfo: UserInfo = {
+            name: status.name || 'Unknown User',
+            email: status.email || 'N/A',
+            planName: plan?.planName || 'N/A',
+            tier: status.userTier?.name || plan?.teamsTier || 'N/A',
+            browserEnabled: plan?.browserEnabled === true,
+            knowledgeBaseEnabled: plan?.knowledgeBaseEnabled === true,
+            canBuyMoreCredits: plan?.canBuyMoreCredits === true,
+            hasAutocompleteFastMode: plan?.hasAutocompleteFastMode === true,
+            monthlyPromptCredits: plan?.monthlyPromptCredits || 0,
+            monthlyFlowCredits: plan?.monthlyFlowCredits || 0,
+            availablePromptCredits: status.planStatus?.availablePromptCredits || 0,
+            availableFlowCredits: status.planStatus?.availableFlowCredits || 0,
+            cascadeWebSearchEnabled: plan?.cascadeWebSearchEnabled === true,
+            canGenerateCommitMessages: plan?.canGenerateCommitMessages === true,
+            allowMcpServers: plan?.defaultTeamConfig?.allowMcpServers === true,
+            maxNumChatInputTokens: String(plan?.maxNumChatInputTokens ?? 'N/A'),
+            tierDescription: status.userTier?.description || 'N/A',
+            upgradeUri: status.userTier?.upgradeSubscriptionUri || '',
+            upgradeText: status.userTier?.upgradeSubscriptionText || '',
+            
+            // New fields population
+            teamsTier: plan?.teamsTier || 'N/A',
+            hasTabToJump: plan?.hasTabToJump === true,
+            allowStickyPremiumModels: plan?.allowStickyPremiumModels === true,
+            allowPremiumCommandModels: plan?.allowPremiumCommandModels === true,
+            maxNumPremiumChatMessages: String(plan?.maxNumPremiumChatMessages ?? 'N/A'),
+            maxCustomChatInstructionCharacters: String(plan?.maxCustomChatInstructionCharacters ?? 'N/A'),
+            maxNumPinnedContextItems: String(plan?.maxNumPinnedContextItems ?? 'N/A'),
+            maxLocalIndexSize: String(plan?.maxLocalIndexSize ?? 'N/A'),
+            monthlyFlexCreditPurchaseAmount: Number(plan?.monthlyFlexCreditPurchaseAmount) || 0,
+            canCustomizeAppIcon: plan?.canCustomizeAppIcon === true,
+            cascadeCanAutoRunCommands: plan?.cascadeCanAutoRunCommands === true,
+            canAllowCascadeInBackground: plan?.canAllowCascadeInBackground === true,
+            allowAutoRunCommands: plan?.defaultTeamConfig?.allowAutoRunCommands === true,
+            allowBrowserExperimentalFeatures: plan?.defaultTeamConfig?.allowBrowserExperimentalFeatures === true,
+            acceptedLatestTermsOfService: status.acceptedLatestTermsOfService === true,
+            userTierId: status.userTier?.id || 'N/A',
+        };
+
+        const configs: ClientModelConfig[] = status.cascadeModelConfigData?.clientModelConfigs || [];
+        const modelSorts = status.cascadeModelConfigData?.clientModelSorts || [];
+
+        // 构建排序顺序映射（从 clientModelSorts 获取）
+        const sortOrderMap = new Map<string, number>();
+        if (modelSorts.length > 0) {
+            // 使用第一个排序配置（通常是 "Recommended"）
+            const primarySort = modelSorts[0];
+            let index = 0;
+            for (const group of primarySort.groups) {
+                for (const label of group.modelLabels) {
+                    sortOrderMap.set(label, index++);
+                }
+            }
+        }
+
+        const models: ModelQuotaInfo[] = configs
+            .filter((m): m is ClientModelConfig & { quotaInfo: NonNullable<ClientModelConfig['quotaInfo']> } => 
+                !!m.quotaInfo,
+            )
+            .map((m) => {
+                const now = new Date();
+                let reset = new Date(m.quotaInfo.resetTime);
+                let resetTimeValid = true;
+                if (Number.isNaN(reset.getTime())) {
+                    reset = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+                    resetTimeValid = false;
+                    logger.warn(`[ReactorCore] Invalid resetTime for model ${m.label}: ${m.quotaInfo.resetTime}`);
+                }
+                const delta = reset.getTime() - now.getTime();
+
+                return {
+                    label: m.label,
+                    modelId: m.modelOrAlias?.model || 'unknown',
+                    remainingFraction: m.quotaInfo.remainingFraction,
+                    remainingPercentage: m.quotaInfo.remainingFraction !== undefined 
+                        ? m.quotaInfo.remainingFraction * 100 
+                        : undefined,
+                    isExhausted: m.quotaInfo.remainingFraction === 0,
+                    resetTime: reset,
+                    resetTimeDisplay: resetTimeValid ? this.formatIso(reset) : (t('common.unknown') || 'Unknown'),
+                    timeUntilReset: delta,
+                    timeUntilResetFormatted: resetTimeValid ? this.formatDelta(delta) : (t('common.unknown') || 'Unknown'),
+                    resetTimeValid,
+                    // 模型能力字段
+                    supportsImages: m.supportsImages,
+                    isRecommended: m.isRecommended,
+                    tagTitle: m.tagTitle,
+                    supportedMimeTypes: m.supportedMimeTypes,
+                };
+            });
+
+        // 排序：优先使用 clientModelSorts，否则按 label 字母排序
+        models.sort((a, b) => {
+            const indexA = sortOrderMap.get(a.label);
+            const indexB = sortOrderMap.get(b.label);
+
+            // 两个都在排序列表中，按排序列表顺序
+            if (indexA !== undefined && indexB !== undefined) {
+                return indexA - indexB;
+            }
+            // 只有 a 在排序列表中，a 排前面
+            if (indexA !== undefined) {
+                return -1;
+            }
+            // 只有 b 在排序列表中，b 排前面
+            if (indexB !== undefined) {
+                return 1;
+            }
+            // 都不在排序列表中，按 label 字母排序
+            return a.label.localeCompare(b.label);
+        });
+
+        this.logModelList('local', models);
+        return this.buildSnapshot(models, promptCredits, userInfo);
+    }
+
+    private logModelList(source: 'local' | 'authorized', models: ModelQuotaInfo[]): void {
+        if (models.length === 0) {
+            return;
+        }
+
+        const items = models.map(model => ({
+            modelId: model.modelId,
+            label: model.label,
+            isRecommended: model.isRecommended,
+            tagTitle: model.tagTitle,
+        }));
+        const payload = JSON.stringify(items);
+        const lastPayload = source === 'local'
+            ? this.lastLoggedLocalModelList
+            : this.lastLoggedAuthorizedModelList;
+        if (payload === lastPayload) {
+            return;
+        }
+        if (source === 'local') {
+            this.lastLoggedLocalModelList = payload;
+        } else {
+            this.lastLoggedAuthorizedModelList = payload;
+        }
+        logger.info(`[ModelList:${source}] count=${items.length} items=${payload}`);
+    }
+
+    private buildSnapshot(
+        models: ModelQuotaInfo[],
+        promptCredits?: PromptCreditsInfo,
+        userInfo?: UserInfo,
+        availableAICredits?: number,
+    ): QuotaSnapshot {
+        const config = configService.getConfig();
+        const allModels = [...models];
+
+        const visibleModels = config.visibleModels ?? [];
+        if (visibleModels.length > 0) {
+            const visibleSet = new Set(visibleModels);
+            const filteredModels = models.filter(model => visibleSet.has(model.modelId));
+            
+            // 安全检查：如果过滤后为空但原始列表不为空，可能是配置问题
+            if (filteredModels.length === 0 && models.length > 0) {
+                logger.warn('[buildSnapshot] Visible models filter resulted in empty list. ' +
+                    `Original: ${models.length}, Visible config: ${visibleModels.length}. ` +
+                    'Showing all recommended models instead.');
+                // 不应用 visibleModels 过滤，但保留推荐模型过滤
+                void configService.updateVisibleModels([]);
+            } else {
+                models = filteredModels;
+            }
+        }
+
+        // 分组逻辑：使用存储的 groupMappings 进行分组
+        let groups: QuotaGroup[] | undefined;
+        
+        if (config.groupingEnabled) {
+            const groupMap = new Map<string, ModelQuotaInfo[]>();
+            const savedMappings = config.groupMappings;
+            const hasSavedMappings = Object.keys(savedMappings).length > 0;
+            
+            if (hasSavedMappings) {
+                // 使用存储的分组映射
+                for (const model of models) {
+                    const groupId = savedMappings[model.modelId];
+                    if (groupId) {
+                        if (!groupMap.has(groupId)) {
+                            groupMap.set(groupId, []);
+                        }
+                        groupMap.get(groupId)!.push(model);
+                    }
+                }
+                
+                // 自动分组检查：检查每个分组内模型的配额是否一致
+                // 如果不一致，只将不一致的模型移出分组（保留用户自定义设置）
+                const modelsToRemove: string[] = [];
+                
+                for (const [groupId, groupModels] of groupMap) {
+                    if (groupModels.length <= 1) {
+                        continue; // 单模型组无需检查
+                    }
+                    
+                    // 检查组内所有模型的配额签名（remainingFraction + resetTime）是否一致
+                    // 使用多数派原则：找出最常见的配额签名，将不符合的模型移除
+                    const signatureCount = new Map<string, { count: number; fraction: number; resetTime: number }>();
+                    
+                    for (const model of groupModels) {
+                        const fraction = model.remainingFraction ?? 0;
+                        const resetTime = model.resetTime.getTime();
+                        const signature = `${fraction.toFixed(6)}_${resetTime}`;
+                        
+                        if (!signatureCount.has(signature)) {
+                            signatureCount.set(signature, { count: 0, fraction, resetTime });
+                        }
+                        signatureCount.get(signature)!.count++;
+                    }
+                    
+                    // 找出最常见的签名（多数派）
+                    let majoritySignature = '';
+                    let maxCount = 0;
+                    for (const [sig, data] of signatureCount) {
+                        if (data.count > maxCount) {
+                            maxCount = data.count;
+                            majoritySignature = sig;
+                        }
+                    }
+                    
+                    // 标记不符合多数派的模型移出分组
+                    for (const model of groupModels) {
+                        const fraction = model.remainingFraction ?? 0;
+                        const resetTime = model.resetTime.getTime();
+                        const signature = `${fraction.toFixed(6)}_${resetTime}`;
+                        
+                        if (signature !== majoritySignature) {
+                            logger.info(`[GroupCheck] Removing model "${model.label}" from group "${groupId}" due to quota mismatch`);
+                            modelsToRemove.push(model.modelId);
+                        }
+                    }
+                }
+                
+                // 更新 groupMappings，移除不一致的模型
+                if (modelsToRemove.length > 0) {
+                    const newMappings = { ...savedMappings };
+                    for (const modelId of modelsToRemove) {
+                        delete newMappings[modelId];
+                    }
+                    
+                    configService.updateGroupMappings(newMappings).catch(err => {
+                        logger.warn(`Failed to save updated groupMappings: ${err}`);
+                    });
+                    
+                    // 从 groupMap 中移除这些模型（未分组模型在分组视图中隐藏）
+                    for (const modelId of modelsToRemove) {
+                        for (const [_gid, gModels] of groupMap) {
+                            const idx = gModels.findIndex(m => m.modelId === modelId);
+                            if (idx !== -1) {
+                                gModels.splice(idx, 1);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 清理空的分组
+                    for (const [gid, gModels] of groupMap) {
+                        if (gModels.length === 0) {
+                            groupMap.delete(gid);
+                        }
+                    }
+                    
+                    logger.info(`[GroupCheck] Removed ${modelsToRemove.length} models from groups due to quota mismatch (hidden in grouped view)`);
+                }
+            } else {
+                // 没有存储映射时，不展示未分组模型
+                logger.debug('Grouping enabled but no saved mappings; ungrouped models are hidden');
+            }
+            
+            // 转换为 QuotaGroup 数组
+            groups = [];
+            let groupIndex = 1;
+            
+            for (const [groupId, groupModels] of groupMap) {
+                // 锚点共识：查找组内模型的自定义名称
+                let groupName = '';
+                const customNames = config.groupingCustomNames;
+                
+                // 统计每个自定义名称的投票数
+                const nameVotes = new Map<string, number>();
+                for (const model of groupModels) {
+                    const customName = customNames[model.modelId];
+                    if (customName) {
+                        nameVotes.set(customName, (nameVotes.get(customName) || 0) + 1);
+                    }
+                }
+                
+                // 选择投票数最多的名称
+                if (nameVotes.size > 0) {
+                    let maxVotes = 0;
+                    for (const [name, votes] of nameVotes) {
+                        if (votes > maxVotes) {
+                            maxVotes = votes;
+                            groupName = name;
+                        }
+                    }
+                }
+                
+                // 如果没有自定义名称，使用默认名称
+                if (!groupName) {
+                    if (groupModels.length === 1) {
+                        groupName = groupModels[0].label;
+                    } else {
+                        groupName = `Group ${groupIndex}`;
+                    }
+                }
+                
+                const firstModel = groupModels[0];
+                // 计算组内所有模型的平均/最低配额
+                const minPercentage = Math.min(...groupModels.map(m => m.remainingPercentage ?? 0));
+                
+                groups.push({
+                    groupId,
+                    groupName,
+                    models: groupModels,
+                    remainingPercentage: minPercentage,
+                    resetTime: firstModel.resetTime,
+                    resetTimeDisplay: firstModel.resetTimeDisplay,
+                    timeUntilResetFormatted: firstModel.timeUntilResetFormatted,
+                    isExhausted: groupModels.some(m => m.isExhausted),
+                });
+                
+                groupIndex++;
+            }
+            
+            // 按组内模型在原始列表中的最小索引排序，保持相对顺序
+            const modelIndexMap = new Map<string, number>();
+            models.forEach((m, i) => modelIndexMap.set(m.modelId, i));
+
+            groups.sort((a, b) => {
+                // 获取 A 组中最靠前的模型索引
+                const minIndexA = Math.min(...a.models.map(m => modelIndexMap.get(m.modelId) ?? 99999));
+                // 获取 B 组中最靠前的模型索引
+                const minIndexB = Math.min(...b.models.map(m => modelIndexMap.get(m.modelId) ?? 99999));
+                return minIndexA - minIndexB;
+            });
+            
+            logger.debug(`Grouping enabled: ${groups.length} groups created (saved mappings: ${hasSavedMappings})`);
+        }
+
+        // 将配额中的模型常量传递给 AutoTriggerController，用于过滤可触发模型
+        const quotaModelConstants = models.map(m => m.modelId);
+        autoTriggerController.setQuotaModels(quotaModelConstants);
+
+        return {
+            timestamp: new Date(),
+            availableAICredits,
+            promptCredits,
+            userInfo,
+            models,
+            allModels,
+            groups,
+            isConnected: true,
+        };
+    }
+
+    public buildAuthorizedSnapshotFromResponse(data: unknown, updatedAt?: number): QuotaSnapshot {
+        const models = this.buildModelsFromAuthorizedResponse(data as AuthorizedQuotaResponse);
+        const snapshot = this.buildSnapshot(
+            models,
+            undefined,
+            undefined,
+            this.getCachedAuthorizedAvailableAICredits(),
+        );
+        if (updatedAt) {
+            snapshot.timestamp = new Date(updatedAt);
+        }
+        return snapshot;
+    }
+
+    private getAuthorizedDefaultVisibleIds(models: ModelQuotaInfo[]): string[] {
+        return models
+            .filter(model => !AUTH_MODEL_BLACKLIST_ID_SET.has(model.modelId))
+            .map(model => model.modelId);
+    }
+
+    private getAuthorizedRecommendedRank(model: ModelQuotaInfo): number {
+        const idRank = AUTH_RECOMMENDED_ID_RANK.get(model.modelId);
+        if (idRank !== undefined) {
+            return idRank;
+        }
+        const labelRank = AUTH_RECOMMENDED_LABEL_RANK.get(model.label);
+        if (labelRank !== undefined) {
+            return labelRank;
+        }
+        const normalizedId = normalizeRecommendedKey(model.modelId);
+        const normalizedLabel = normalizeRecommendedKey(model.label);
+        return Math.min(
+            AUTH_RECOMMENDED_ID_KEY_RANK.get(normalizedId) ?? Number.MAX_SAFE_INTEGER,
+            AUTH_RECOMMENDED_LABEL_KEY_RANK.get(normalizedLabel) ?? Number.MAX_SAFE_INTEGER,
+        );
+    }
+
+    private getAuthorizedRecommendedRankFromRaw(modelKey: string, info: AuthorizedModelInfo): number {
+        const modelId = info.model || modelKey;
+        const label = info.displayName?.trim() || modelKey;
+
+        const idRank = AUTH_RECOMMENDED_ID_RANK.get(modelId);
+        if (idRank !== undefined) {
+            return idRank;
+        }
+        const labelRank = AUTH_RECOMMENDED_LABEL_RANK.get(label);
+        if (labelRank !== undefined) {
+            return labelRank;
+        }
+
+        const normalizedId = normalizeRecommendedKey(modelId);
+        const normalizedLabel = normalizeRecommendedKey(label);
+        return Math.min(
+            AUTH_RECOMMENDED_ID_KEY_RANK.get(normalizedId) ?? Number.MAX_SAFE_INTEGER,
+            AUTH_RECOMMENDED_LABEL_KEY_RANK.get(normalizedLabel) ?? Number.MAX_SAFE_INTEGER,
+        );
+    }
+
+    private async ensureAuthorizedVisibleModels(models: ModelQuotaInfo[]): Promise<void> {
+        const config = configService.getConfig();
+        if (config.quotaSource !== 'authorized') {
+            return;
+        }
+
+        const initialized = configService.getStateFlag('visibleModelsInitializedAuthorized', false);
+        if (config.visibleModels.length > 0) {
+            if (!initialized) {
+                await configService.setStateFlag('visibleModelsInitializedAuthorized', true);
+            }
+            return;
+        }
+
+        if (initialized || models.length === 0) {
+            return;
+        }
+
+        const allowedIds = this.getAuthorizedDefaultVisibleIds(models);
+        const defaultVisible = allowedIds.length > 0
+            ? allowedIds
+            : models.map(model => model.modelId);
+        await configService.updateVisibleModels(defaultVisible);
+        await configService.setStateFlag('visibleModelsInitializedAuthorized', true);
+    }
+
+    /**
+     * 格式化日期（自动国际化）
+     */
+    private formatIso(d: Date): string {
+        const dateStr = d.toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        });
+        const timeStr = d.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        });
+        return `${dateStr} ${timeStr}`;
+    }
+
+    /**
+     * 格式化时间差
+     * - < 60分钟: 显示 Xm
+     * - < 24小时: 显示 Xh Ym
+     * - >= 24小时: 显示 Xd Yh Zm
+     */
+    private formatDelta(ms: number): string {
+        if (ms <= 0) {
+            return t('dashboard.online');
+        }
+        const totalMinutes = Math.ceil(ms / 60000);
+        
+        // 小于 60 分钟：只显示分钟
+        if (totalMinutes < 60) {
+            return `${totalMinutes}m`;
+        }
+        
+        const totalHours = Math.floor(totalMinutes / 60);
+        const remainingMinutes = totalMinutes % 60;
+        
+        // 小于 24 小时：显示小时和分钟
+        if (totalHours < 24) {
+            return `${totalHours}h ${remainingMinutes}m`;
+        }
+        
+        // >= 24 小时：显示天、小时、分钟
+        const days = Math.floor(totalHours / 24);
+        const remainingHours = totalHours % 24;
+        return `${days}d ${remainingHours}h ${remainingMinutes}m`;
+    }
+
+    /**
+     * 创建离线状态的快照
+     */
+    static createOfflineSnapshot(errorMessage?: string): QuotaSnapshot {
+        return {
+            timestamp: new Date(),
+            models: [],
+            isConnected: false,
+            errorMessage,
+        };
+    }
+
+    /**
+     * 计算“自动分组”同款分组结果（家族匹配 + 固定组名）
+     */
+    static calculateSmartGrouping(models: ModelQuotaInfo[]): {
+        groupMappings: Record<string, string>;
+        groupNames: Record<string, string>;
+    } {
+        const familyBuckets = new Map<AutoGroupFamily, string[]>();
+        for (const model of models) {
+            const family = resolveAutoGroupFamily(model.modelId, model.label);
+            if (!family) {
+                continue;
+            }
+            if (!familyBuckets.has(family)) {
+                familyBuckets.set(family, []);
+            }
+            familyBuckets.get(family)!.push(model.modelId);
+        }
+
+        const groupMappings: Record<string, string> = {};
+        const groupNames: Record<string, string> = {};
+
+        for (const family of AUTO_GROUP_FAMILY_ORDER) {
+            const modelIds = familyBuckets.get(family);
+            if (!modelIds || modelIds.length === 0) {
+                continue;
+            }
+
+            const uniqueModelIds = Array.from(new Set(modelIds));
+            const stableGroupId = uniqueModelIds.sort().join('_');
+            const groupName = AUTO_GROUP_FAMILY_DISPLAY_NAMES[family];
+
+            for (const modelId of uniqueModelIds) {
+                groupMappings[modelId] = stableGroupId;
+                groupNames[modelId] = groupName;
+            }
+        }
+
+        return {
+            groupMappings,
+            groupNames,
+        };
+    }
+
+    /**
+     * 根据当前模型列表计算分组映射（与“自动分组”一致）
+     * 返回 modelId -> groupId 的映射
+     */
+    static calculateGroupMappings(models: ModelQuotaInfo[]): Record<string, string> {
+        return this.calculateSmartGrouping(models).groupMappings;
+    }
+}
+
+// 保持向后兼容
+export type quota_snapshot = QuotaSnapshot;
+export type model_quota_info = ModelQuotaInfo;

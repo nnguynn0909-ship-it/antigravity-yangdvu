@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "announcements": [
+    {
+      "id": "ann-yangdvu-welcome-1",
+      "type": "info",
+      "priority": 100,
+      "title": "Chào mừng bạn đến với Antigravity YangDvu",
+      "summary": "Phiên bản giám sát hạn mức AI và chuyển đổi đa tài khoản độc quyền của YangDvu.",
+      "content": "Chào mừng bạn đã cài đặt Antigravity YangDvu!\n\n• Giám sát hạn mức theo thời gian thực (Claude 3.7 Sonnet, Gemini 2.5 Flash, Thinking, v.v.)\n• Đổi tài khoản mượt mà (Seamless Switch) trực tiếp trong IDE\n• Bảo mật tuyệt đối 100%: Toàn bộ dữ liệu tài khoản được lưu cục bộ trên máy tính của bạn\n• Giao diện và thông báo thuần Tiếng Việt\n\nBản quyền thuộc về YangDvu.",
+      "targetVersions": "*",
+      "targetLanguages": [
+        "*"
+      ],
+      "showOnce": true,
+      "popup": false,
+      "createdAt": "2026-09-27T00:00:00Z",
+      "expiresAt": null,
+      "locales": {
+        "vi": {
+          "title": "Chào mừng bạn đến với Antigravity YangDvu",
+          "summary": "Phiên bản giám sát hạn mức AI và chuyển đổi đa tài khoản độc quyền của YangDvu.",
+          "content": "Chào mừng bạn đã cài đặt Antigravity YangDvu!\n\n• Giám sát hạn mức theo thời gian thực (Claude 3.7 Sonnet, Gemini 2.5 Flash, Thinking, v.v.)\n• Đổi tài khoản mượt mà (Seamless Switch) trực tiếp trong IDE\n• Bảo mật tuyệt đối 100%: Toàn bộ dữ liệu tài khoản được lưu cục bộ trên máy tính của bạn\n• Giao diện và thông báo thuần Tiếng Việt\n\nBản quyền thuộc về YangDvu."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+out
+node_modules
+.vscode-test
+.DS_Store
+.vsc-extension-quickstart.md
+*.vsix
+
+# Local environment variables (contains secrets like SENTRY_DSN)
+.env.local
+
+# Local agent rules (do not commit)
+/AGENTS.md

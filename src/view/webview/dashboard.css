@@ -1,0 +1,6 @@
+/**
+ * Antigravity Cockpit - Dashboard 样式入口
+ */
+@import './dashboard_core.css';
+@import './dashboard_cards.css';
+@import './dashboard_modals_tabs.css';

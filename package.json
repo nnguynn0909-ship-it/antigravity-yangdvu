@@ -1,0 +1,369 @@
+{
+  "name": "antigravity-yangdvu",
+  "displayName": "Antigravity YangDvu - Quản Lý Hạn Mức Đa Tài Khoản",
+  "icon": "assets/icon.png",
+  "description": "Bảng điều khiển theo dõi hạn mức AI và quản lý chuyển đổi đa tài khoản Antigravity - Bản quyền YangDvu, Bảo mật 100% & Thuần Tiếng Việt.",
+  "version": "1.0.0",
+  "publisher": "yangdvu",
+  "author": "YangDvu",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "antigravity",
+    "yangdvu",
+    "ai",
+    "quota",
+    "dashboard",
+    "monitor"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nnguynn0909-ship-it/antigravity-yangdvu.git"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "agCockpit.open",
+        "title": "Mở Giám Sát Hạn Mức YangDvu",
+        "category": "Antigravity",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "agCockpit.refresh",
+        "title": "Làm Mới Dữ Liệu Hạn Mức",
+        "category": "Antigravity",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "agCockpit.refreshModelCache",
+        "title": "Làm Mới Danh Sách Mô Hình",
+        "category": "Antigravity",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agCockpit.showLogs",
+        "title": "Xem Nhật Ký Hoạt Động",
+        "category": "Antigravity",
+        "icon": "$(output)"
+      },
+      {
+        "command": "agCockpit.retry",
+        "title": "Thử Lại Kết Nối",
+        "category": "Antigravity",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agCockpit.openFeedback",
+        "title": "Báo Cáo Sự Cố / Phản Hồi",
+        "category": "Antigravity",
+        "icon": "$(feedback)"
+      },
+      {
+        "command": "agCockpit.setWarningThreshold",
+        "title": "Cài Đặt Ngưỡng Cảnh Báo",
+        "category": "Antigravity"
+      },
+      {
+        "command": "agCockpit.setCriticalThreshold",
+        "title": "Cài Đặt Ngưỡng Nguy Cấp",
+        "category": "Antigravity"
+      },
+      {
+        "command": "agCockpit.setAccountSwitchMode",
+        "title": "Cài Đặt Chế Độ Đổi Tài Khoản",
+        "category": "Antigravity"
+      },
+      {
+        "command": "agCockpit.refreshAnnouncements",
+        "title": "Làm Mới Thông Báo",
+        "category": "Antigravity",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "agCockpit.accountTree.refresh",
+        "title": "Làm Mới Danh Sách Tài Khoản",
+        "category": "Antigravity",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agCockpit.accountTree.switch",
+        "title": "Chuyển Sang Tài Khoản Này",
+        "category": "Antigravity",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "agCockpit.accountTree.openManager",
+        "title": "Mở Quản Lý Công Cụ",
+        "category": "Antigravity",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "agCockpit.accountTree.loadAccountQuota",
+        "title": "Tải Hạn Mức Tài Khoản",
+        "category": "Antigravity",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "agCockpit.debugLocalAccount",
+        "title": "Kiểm Tra Tài Khoản Cục Bộ",
+        "category": "Antigravity",
+        "icon": "$(bug)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agCockpit.open",
+        "key": "ctrl+shift+q",
+        "mac": "cmd+shift+q"
+      },
+      {
+        "command": "agCockpit.refresh",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "activeWebviewPanelId == 'antigravity.cockpit'"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agCockpit",
+          "title": "Antigravity YangDvu",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "agCockpit": [
+        {
+          "id": "agCockpit.accountTree",
+          "name": "Tài Khoản",
+          "icon": "$(account)",
+          "contextualTitle": "Tài Khoản Antigravity YangDvu"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Antigravity YangDvu",
+      "properties": {
+        "agCockpit.refreshInterval": {
+          "type": "number",
+          "default": 120,
+          "minimum": 10,
+          "maximum": 3600,
+          "description": "Khoảng thời gian làm mới dữ liệu hạn mức tính bằng giây (10-3600)."
+        },
+        "agCockpit.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "enumDescriptions": [
+            "Hiển thị tất cả nhật ký bao gồm thông tin gỡ lỗi",
+            "Hiển thị thông tin, cảnh báo và lỗi",
+            "Chỉ hiển thị cảnh báo và lỗi",
+            "Chỉ hiển thị lỗi"
+          ],
+          "description": "Cấp độ ghi nhật ký cho kênh đầu ra."
+        },
+        "agCockpit.notificationEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị thông báo khi hạn mức cạn kiệt hoặc sắp hết."
+        },
+        "agCockpit.statusBarFormat": {
+          "type": "string",
+          "default": "standard",
+          "enum": [
+            "icon",
+            "dot",
+            "percent",
+            "compact",
+            "namePercent",
+            "standard"
+          ],
+          "enumDescriptions": [
+            "Chỉ biểu tượng - 🚀",
+            "Chỉ dấu chấm trạng thái - 🟢/🟡/🔴",
+            "Chỉ phần trăm - 95%",
+            "Dấu chấm + phần trăm - 🟢 95%",
+            "Tên + phần trăm - Sonnet: 95%",
+            "Dấu chấm + tên mô hình + phần trăm - 🟢 Sonnet: 95% (mặc định)"
+          ],
+          "description": "Định dạng hiển thị trên thanh trạng thái."
+        },
+        "agCockpit.groupingEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Bật tính năng nhóm hạn mức. Các mô hình dùng chung nhóm hạn mức sẽ được nhóm lại với nhau."
+        },
+        "agCockpit.groupingShowInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hiển thị nhóm hạn mức trên thanh trạng thái thay vì từng mô hình riêng lẻ."
+        },
+        "agCockpit.warningThreshold": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 80,
+          "description": "Ngưỡng cảnh báo theo phần trăm. Hạn mức dưới mức này sẽ hiển thị cảnh báo màu vàng (5-80)."
+        },
+        "agCockpit.criticalThreshold": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Ngưỡng nguy cấp theo phần trăm. Hạn mức dưới mức này sẽ hiển thị cảnh báo màu đỏ (1-50)."
+        },
+        "agCockpit.quotaSource": {
+          "type": "string",
+          "default": "authorized",
+          "enum": [
+            "local",
+            "authorized"
+          ],
+          "enumDescriptions": [
+            "Tiến trình cục bộ",
+            "Tài khoản đã ủy quyền (mặc định)"
+          ],
+          "description": "Nguồn lấy dữ liệu hạn mức. Dùng tài khoản đã ủy quyền để lấy hạn mức mà không cần tiến trình cục bộ."
+        },
+        "agCockpit.displayMode": {
+          "type": "string",
+          "default": "webview",
+          "enum": [
+            "webview",
+            "quickpick"
+          ],
+          "enumDescriptions": [
+            "Bảng điều khiển đầy đủ với Webview (mặc định)",
+            "Trình đơn chọn nhanh QuickPick gọn nhẹ (tương thích cao)"
+          ],
+          "description": "Chế độ hiển thị thông tin hạn mức. Sử dụng 'quickpick' nếu Webview không tải được trên hệ thống của bạn."
+        },
+        "agCockpit.profileHidden": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ẩn bảng chi tiết gói dịch vụ trên bảng điều khiển."
+        },
+        "agCockpit.dataMasked": {
+          "type": "boolean",
+          "default": false,
+          "description": "Che dữ liệu nhạy cảm (email, v.v.) trong bảng chi tiết gói dịch vụ."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "agCockpit.open",
+          "when": "true"
+        },
+        {
+          "command": "agCockpit.refresh",
+          "when": "true"
+        },
+        {
+          "command": "agCockpit.refreshModelCache",
+          "when": "true"
+        },
+        {
+          "command": "agCockpit.showLogs",
+          "when": "true"
+        },
+        {
+          "command": "agCockpit.retry",
+          "when": "true"
+        },
+        {
+          "command": "agCockpit.setAccountSwitchMode",
+          "when": "false"
+        },
+        {
+          "command": "agCockpit.accountTree.switch",
+          "when": "false"
+        },
+        {
+          "command": "agCockpit.accountTree.loadAccountQuota",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "agCockpit.accountTree.refresh",
+          "when": "view == agCockpit.accountTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agCockpit.accountTree.openManager",
+          "when": "view == agCockpit.accountTree",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agCockpit.accountTree.switch",
+          "when": "view == agCockpit.accountTree && viewItem == account",
+          "group": "inline@1"
+        },
+        {
+          "command": "agCockpit.accountTree.switch",
+          "when": "view == agCockpit.accountTree && viewItem == account",
+          "group": "1_actions@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run lint && npm run build:prod",
+    "compile": "npm run lint:webview && npm run build",
+    "build": "node scripts/build.js",
+    "build:prod": "node scripts/build.js --production",
+    "watch": "npm run watch:esbuild",
+    "watch:esbuild": "node scripts/build.js --watch",
+    "copy-webview": "shx mkdir -p out/view/webview && shx cp src/view/webview/*.css src/view/webview/*.js out/view/webview/",
+    "lint": "eslint src --ext ts,js",
+    "lint:fix": "eslint src --ext ts,js --fix",
+    "lint:webview": "eslint src/view/webview/*.js",
+    "package": "npx vsce package",
+    "test": "jest",
+    "pretest": "npm run compile",
+    "postinstall": "bash scripts/install-hooks.sh",
+    "release": "bash scripts/release.sh"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.0.0",
+    "@types/sql.js": "^1.4.9",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.57.0",
+    "jest": "^30.2.0",
+    "shx": "^0.4.0",
+    "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "cron-parser": "^5.4.0",
+    "sql.js": "^1.13.0"
+  }
+}
