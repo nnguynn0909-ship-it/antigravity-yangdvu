@@ -384,7 +384,7 @@ export async function ensureLocalCredentialImported(
 
     try {
         const credential = await loadCredentialFromStateDb();
-        if (!credential) {
+        if (!credential || !credential.email) {
             return null;
         }
 
