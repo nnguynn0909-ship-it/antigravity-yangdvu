@@ -526,10 +526,49 @@ export class AccountsRefreshService {
             });
         }
 
+        // Luôn gộp tất cả tài khoản trong credentialStorage vào danh sách hiển thị
+        for (const [email, credential] of Object.entries(credentials)) {
+            if (!this.accounts.has(email)) {
+                const isCurrent = Boolean(
+                    activeEmailInPluginLower && email.trim().toLowerCase() === activeEmailInPluginLower,
+                );
+                if (isCurrent && !currentEmail) {
+                    currentEmail = email;
+                }
+                this.accounts.set(email, {
+                    email,
+                    toolsId: null,
+                    isCurrent,
+                    hasDeviceBound: false,
+                    hasPluginCredential: true,
+                    isInvalid: credential?.isInvalid ?? false,
+                    invalidReason: credential?.isInvalid ? t('accountsRefresh.authExpired') : undefined,
+                    isForbidden: credential?.isForbidden ?? false,
+                    forbiddenReason: credential?.isForbidden ? t('accountsRefresh.forbidden') : undefined,
+                    expiresAt: credential?.expiresAt,
+                });
+            }
+        }
+
         if (!currentEmail && !isSeamlessMode && toolsResp.current_account_id) {
             const currentAcc = toolsAccounts.find((acc) => acc.id === toolsResp.current_account_id);
             if (currentAcc) {
                 currentEmail = currentAcc.email;
+            }
+        }
+
+        if (!currentEmail && activeEmailInPlugin && this.accounts.has(activeEmailInPlugin)) {
+            currentEmail = activeEmailInPlugin;
+        }
+
+        if (!currentEmail && this.accounts.size > 0) {
+            const firstEmail = this.accounts.keys().next().value;
+            if (firstEmail) {
+                currentEmail = firstEmail;
+                const acc = this.accounts.get(firstEmail);
+                if (acc) {
+                    acc.isCurrent = true;
+                }
             }
         }
 
