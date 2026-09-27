@@ -7,8 +7,11 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { OAuthCredential, AuthorizationStatus, AccountInfo } from './types';
 import { logger } from '../shared/log_service';
+import { getCockpitToolsSharedDir } from '../shared/antigravity_paths';
 
 // Legacy single-account key (for migration)
 const LEGACY_CREDENTIAL_KEY = 'antigravity.autoTrigger.credential';
@@ -74,22 +77,92 @@ class CredentialStorage {
 
     // ============ Multi-Account Methods ============
 
+    private getVaultFilePath(): string {
+        const vaultDir = getCockpitToolsSharedDir();
+        return path.join(vaultDir, 'accounts_vault.json');
+    }
+
+    private saveToVault(storage: CredentialsStorage): void {
+        try {
+            const vaultDir = getCockpitToolsSharedDir();
+            if (!fs.existsSync(vaultDir)) {
+                fs.mkdirSync(vaultDir, { recursive: true });
+            }
+            const vaultFile = this.getVaultFilePath();
+            fs.writeFileSync(vaultFile, JSON.stringify(storage, null, 2), 'utf-8');
+            logger.info(`[CredentialStorage] Local vault backup saved (${Object.keys(storage.accounts).length} accounts)`);
+        } catch (vaultErr) {
+            logger.warn(`[CredentialStorage] Failed to save vault backup: ${vaultErr instanceof Error ? vaultErr.message : vaultErr}`);
+        }
+    }
+
+    private readFromVault(): CredentialsStorage | null {
+        try {
+            const vaultFile = this.getVaultFilePath();
+            if (fs.existsSync(vaultFile)) {
+                const content = fs.readFileSync(vaultFile, 'utf-8');
+                if (content && content.trim()) {
+                    const parsed = JSON.parse(content) as CredentialsStorage;
+                    if (parsed && typeof parsed.accounts === 'object') {
+                        return parsed;
+                    }
+                }
+            }
+        } catch (vaultErr) {
+            logger.warn(`[CredentialStorage] Failed to read from vault: ${vaultErr instanceof Error ? vaultErr.message : vaultErr}`);
+        }
+        return null;
+    }
+
     /**
      * Get all credentials storage
      */
     private async getCredentialsStorage(): Promise<CredentialsStorage> {
         this.ensureInitialized();
+        let storageFromSecret: CredentialsStorage | null = null;
         try {
             const json = await this.secretStorage!.get(CREDENTIALS_KEY);
-            if (!json) {
-                return { accounts: {} };
+            if (json) {
+                storageFromSecret = JSON.parse(json) as CredentialsStorage;
             }
-            return JSON.parse(json) as CredentialsStorage;
         } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
             logger.error(`[CredentialStorage] Failed to get credentials storage: ${err.message}`);
-            return { accounts: {} };
         }
+
+        const vaultData = this.readFromVault();
+
+        // Nếu SecretStorage có tài khoản
+        if (storageFromSecret && typeof storageFromSecret.accounts === 'object' && Object.keys(storageFromSecret.accounts).length > 0) {
+            // Nếu vault có tài khoản khác mà SecretStorage thiếu, gộp lại
+            if (vaultData && typeof vaultData.accounts === 'object') {
+                let merged = false;
+                for (const [email, cred] of Object.entries(vaultData.accounts)) {
+                    if (!storageFromSecret.accounts[email]) {
+                        storageFromSecret.accounts[email] = cred;
+                        merged = true;
+                    }
+                }
+                if (merged) {
+                    await this.secretStorage!.store(CREDENTIALS_KEY, JSON.stringify(storageFromSecret));
+                }
+            }
+            this.saveToVault(storageFromSecret);
+            return storageFromSecret;
+        }
+
+        // Nếu SecretStorage bị trống hoặc bị mất sau khi tắt máy/reboot, khôi phục ngay từ vault!
+        if (vaultData && typeof vaultData.accounts === 'object' && Object.keys(vaultData.accounts).length > 0) {
+            logger.info(`[CredentialStorage] Restored ${Object.keys(vaultData.accounts).length} accounts from persistent local vault!`);
+            try {
+                await this.secretStorage!.store(CREDENTIALS_KEY, JSON.stringify(vaultData));
+            } catch (err) {
+                logger.warn(`[CredentialStorage] Failed to re-seed secretStorage from vault: ${err}`);
+            }
+            return vaultData;
+        }
+
+        return { accounts: {} };
     }
 
     /**
@@ -105,6 +178,9 @@ class CredentialStorage {
             await this.secretStorage!.store(CREDENTIALS_KEY, json);
             logger.info('[CredentialStorage] Credentials storage saved');
 
+            // Luôn lưu vào vault file độc lập để không bao giờ bị mất sau khi tắt máy
+            this.saveToVault(storage);
+
             // 通过 WebSocket 通知 Cockpit Tools 数据已变更
             if (!options?.skipNotifyTools) {
                 this.notifyDataChanged();
@@ -112,6 +188,7 @@ class CredentialStorage {
         } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
             logger.error(`[CredentialStorage] Failed to save credentials storage: ${err.message}`);
+            this.saveToVault(storage);
             throw err;
         }
     }
@@ -314,28 +391,13 @@ class CredentialStorage {
     }
 
     /**
-     * 与远程账号列表同步（删除本地多余的账号）
+     * 与远程账号列表同步（删除本地多余账号逻辑已禁用以保护用户数据）
      */
     async syncWithRemoteAccountList(remoteEmails: string[]): Promise<void> {
-        await this.ensureMigrated();
-        const storage = await this.getCredentialsStorage();
-        const localEmails = Object.keys(storage.accounts);
-        const remoteEmailSet = new Set(remoteEmails);
-        
-        let changed = false;
-        
-        for (const email of localEmails) {
-            if (!remoteEmailSet.has(email)) {
-                logger.info(`[CredentialStorage] Syncing: Account ${email} not found in remote, deleting locally`);
-                // 调用删除，跳过通知 Tools (防止循环)
-                await this.deleteCredentialForAccount(email, true);
-                changed = true;
-            }
-        }
-        
-        if (changed) {
-            logger.info('[CredentialStorage] Synced with remote account list');
-        }
+        // Safe mode: Vô hiệu hóa việc tự động xóa tài khoản khi đồng bộ với remote
+        // Tránh tình trạng tắt máy tính hoặc bật máy hôm sau bị mất các nick đã liên kết
+        logger.info(`[CredentialStorage] syncWithRemoteAccountList called with ${remoteEmails.length} accounts (auto-deletion disabled)`);
+        return;
     }
 
     /**
@@ -412,6 +474,20 @@ class CredentialStorage {
     async setActiveAccount(email: string | null, _skipNotifyTools: boolean = false): Promise<void> {
         this.ensureInitialized();
         await this.globalState!.update(ACTIVE_ACCOUNT_KEY, email);
+        try {
+            const vaultDir = getCockpitToolsSharedDir();
+            if (!fs.existsSync(vaultDir)) {
+                fs.mkdirSync(vaultDir, { recursive: true });
+            }
+            const activeFile = path.join(vaultDir, 'active_account.txt');
+            if (email) {
+                fs.writeFileSync(activeFile, email, 'utf-8');
+            } else if (fs.existsSync(activeFile)) {
+                fs.unlinkSync(activeFile);
+            }
+        } catch (err) {
+            logger.debug(`[CredentialStorage] Failed to save active account file: ${err}`);
+        }
         logger.info(`[CredentialStorage] Active account set to: ${email || 'none'}`);
 
         // Backward compatibility: sync to legacy key so older versions can read it
@@ -455,7 +531,23 @@ class CredentialStorage {
      */
     async getActiveAccount(): Promise<string | null> {
         this.ensureInitialized();
-        return this.globalState!.get<string | null>(ACTIVE_ACCOUNT_KEY, null);
+        const active = this.globalState!.get<string | null>(ACTIVE_ACCOUNT_KEY, null);
+        if (active) {
+            return active;
+        }
+        try {
+            const activeFile = path.join(getCockpitToolsSharedDir(), 'active_account.txt');
+            if (fs.existsSync(activeFile)) {
+                const saved = fs.readFileSync(activeFile, 'utf-8').trim();
+                if (saved) {
+                    await this.globalState!.update(ACTIVE_ACCOUNT_KEY, saved);
+                    return saved;
+                }
+            }
+        } catch (err) {
+            logger.debug(`[CredentialStorage] Failed to read active account file: ${err}`);
+        }
+        return null;
     }
 
     /**
