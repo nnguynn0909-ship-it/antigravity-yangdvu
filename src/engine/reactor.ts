@@ -29,6 +29,22 @@ import {
     isApiCacheValid,
     type QuotaApiCacheRecord,
 } from '../services/quota_api_cache';
+import { AUTH_MODEL_BLACKLIST_IDS, AUTH_RECOMMENDED_LABELS, AUTH_RECOMMENDED_MODEL_IDS } from '../shared/recommended_models';
+
+const normalizeRecommendedKey = (value: string): string => (value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const AUTH_RECOMMENDED_LABEL_RANK = new Map<string, number>(
+    AUTH_RECOMMENDED_LABELS.map((label, index) => [label, index]),
+);
+const AUTH_RECOMMENDED_ID_RANK = new Map<string, number>(
+    AUTH_RECOMMENDED_MODEL_IDS.map((id, index) => [id, index]),
+);
+const AUTH_RECOMMENDED_LABEL_KEY_RANK = new Map<string, number>(
+    AUTH_RECOMMENDED_LABELS.map((label, index) => [normalizeRecommendedKey(label), index]),
+);
+const AUTH_RECOMMENDED_ID_KEY_RANK = new Map<string, number>(
+    AUTH_RECOMMENDED_MODEL_IDS.map((id, index) => [normalizeRecommendedKey(id), index]),
+);
+const AUTH_MODEL_BLACKLIST_ID_SET = new Set<string>(AUTH_MODEL_BLACKLIST_IDS);
 
 
 interface AuthorizedQuotaInfo {
