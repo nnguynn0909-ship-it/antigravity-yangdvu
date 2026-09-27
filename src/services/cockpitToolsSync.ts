@@ -11,7 +11,7 @@ let lastSyncAt = 0;
 
 export const cockpitToolsSyncEvents = new EventEmitter();
 
-function toUnixSeconds(iso?: string): number | undefined {
+function _toUnixSeconds(iso?: string): number | undefined {
     if (!iso) {
         return undefined;
     }
@@ -60,34 +60,22 @@ export async function syncAccountsWithCockpitTools(options?: { force?: boolean; 
         let remoteSet = new Set(remoteEmails);
 
         const previousRemoteEmails = credentialStorage.getToolsAccountSnapshot();
-        const previousRemoteSet = new Set(previousRemoteEmails);
+        const _previousRemoteSet = new Set(previousRemoteEmails);
 
         const localCredentials = await credentialStorage.getAllCredentials();
         const localEmails = Object.keys(localCredentials);
         const localSet = new Set(localEmails);
 
         logger.info(`[Sync] Local=${localEmails.length} Remote=${remoteAccounts.length} PrevRemote=${previousRemoteEmails.length}`);
-        let pushedAny = false;
+        const pushedAny = false;
         let localChanged = false;
 
-        // 处理本地存在但远端不存在的账号
+        // [BẢO MẬT & BẢO TOÀN DỮ LIỆU]: Không bao giờ tự động xóa tài khoản cục bộ của người dùng
         for (const email of localEmails) {
             if (remoteSet.has(email)) {
                 continue;
             }
-
-            // 如果之前远端存在，现在消失，视为远端删除
-            if (previousRemoteSet.has(email)) {
-                await credentialStorage.deleteCredentialForAccount(email, true);
-                localSet.delete(email);
-                localChanged = true;
-                logger.info(`[Sync] Local delete (remote removed): ${email}`);
-                continue;
-            }
-
-            // [BẢO MẬT]: Không bao giờ đẩy token ra bên ngoài qua WebSocket
-            logger.debug(`[Sync] Blocked external push of token for: ${email}`);
-            continue;
+            logger.debug(`[Sync] Giữ an toàn tài khoản cục bộ: ${email}`);
         }
 
         if (pushedAny) {
