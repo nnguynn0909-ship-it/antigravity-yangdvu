@@ -305,6 +305,8 @@ export interface UserInfo {
     allowBrowserExperimentalFeatures: boolean;
     acceptedLatestTermsOfService: boolean;
     userTierId: string;
+    paidTier?: Record<string, unknown>;
+    plan?: Record<string, unknown>;
 }
 
 // ============ UI 相关类型 ============
