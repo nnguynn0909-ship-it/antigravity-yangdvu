@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Script cài đặt tự động Antigravity Cockpit (Bản quyền YangDvu) cho Antigravity IDE & VS Code.
+    Script cài đặt tự động Antigravity YangDvu cho Antigravity IDE & VS Code.
 .DESCRIPTION
     Tự động tìm kiếm bản phát hành mới nhất từ GitHub, tải về file .vsix và cài đặt trực tiếp.
 #>
@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host ""
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   🚀 CAI DAT ANTIGRAVITY COCKPIT (YANGDVU) TU DONG 🚀   " -ForegroundColor Yellow
+Write-Host "       🚀 CAI DAT ANTIGRAVITY YANGDVU TU DONG 🚀         " -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
 
