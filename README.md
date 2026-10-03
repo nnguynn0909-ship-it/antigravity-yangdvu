@@ -12,7 +12,7 @@
 ## 🌟 Tính Năng Nổi Bật
 
 ### 1. 🛡️ Bảo Mật Riêng Tư Tuyệt Đối (100% Local)
-- **Không rò rỉ token:** Toàn bộ thông tin tài khoản và Refresh Token được lưu trữ an toàn trong thư mục máy tính cục bộ của bạn (`AppData/AntigravityCockpitPrivate`).
+- **Không rò rỉ token:** Toàn bộ thông tin tài khoản và Refresh Token được lưu trữ an toàn trong thư mục máy tính cục bộ của bạn (`AppData/AntigravityYangDvuPrivate`).
 - **Không gửi ra ngoài:** Đã loại bỏ hoàn toàn việc truyền dữ liệu nhạy cảm qua mạng hay WebSocket trung gian.
 - **Không quảng cáo:** Đã xóa bỏ toàn bộ mã quảng cáo, thông báo bán hàng hay liên kết ngoài không an toàn.
 
@@ -78,7 +78,7 @@ irm https://raw.githubusercontent.com/nnguynn0909-ship-it/antigravity-yangdvu/ma
 
 ## ⚙️ Cấu Hình Tùy Chỉnh
 
-Trong phần **Settings** (`Ctrl + ,`), tìm từ khóa `agCockpit` để điều chỉnh:
+Trong phần **Settings** (`Ctrl + ,`), tìm từ khóa `yangdvu` để điều chỉnh:
 
 - **`agCockpit.refreshInterval`**: Thời gian làm mới tự động (mặc định: 120 giây).
 - **`agCockpit.warningThreshold`**: Ngưỡng phần trăm hiện cảnh báo vàng (mặc định: 30%).
