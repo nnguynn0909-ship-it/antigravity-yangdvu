@@ -960,17 +960,16 @@ import { createAnnouncementModule } from './dashboard_announcements';
             handleAntigravityToolsSyncComplete(message.data?.success, message.data?.error);
         }
         
-        // 处理 Cockpit Tools 数据同步消息
+        // Xử lý thông báo đồng bộ dữ liệu
         if (message.type === 'refreshAccounts') {
-            // Cockpit Tools 数据变更，刷新授权状态和账号列表
             vscode.postMessage({ command: 'getAutoTriggerState' });
-            showToast(i18n['cockpitTools.dataChanged'] || '账号数据已更新', 'info');
+            showToast(i18n['cockpitTools.dataChanged'] || 'Dữ liệu tài khoản đã cập nhật', 'info');
         }
         
         if (message.type === 'accountSwitched') {
-            // 账号切换完成
+            // Chuyển tài khoản hoàn tất
             vscode.postMessage({ command: 'getAutoTriggerState' });
-            showToast((i18n['cockpitTools.accountSwitched'] || '已切换至 {email}').replace('{email}', message.email || ''), 'success');
+            showToast((i18n['cockpitTools.accountSwitched'] || 'Đã chuyển sang {email}').replace('{email}', message.email || ''), 'success');
         }
     }
 
