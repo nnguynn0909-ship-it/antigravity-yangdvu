@@ -164,7 +164,7 @@ export class UpdateService {
             const ACTION_SKIP = 'Không nhắc lại';
 
             const userChoice = await vscode.window.showInformationMessage(
-                `🎉 Antigravity Cockpit (YangDvu) đã có phiên bản mới (${latestTag})! Bạn có muốn cập nhật không?`,
+                `🎉 Antigravity YangDvu đã có phiên bản mới (${latestTag})! Bạn có muốn cập nhật không?`,
                 ACTION_UPDATE,
                 ACTION_LATER,
                 ACTION_SKIP,
@@ -201,7 +201,7 @@ export class UpdateService {
         await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
-                title: `Đang cập nhật Antigravity Cockpit lên ${targetTag}...`,
+                title: `Đang cập nhật Antigravity YangDvu lên ${targetTag}...`,
                 cancellable: false,
             },
             async (progress) => {
@@ -252,7 +252,7 @@ export class UpdateService {
                     // Thông báo hoàn thành
                     const reloadAction = 'Khởi động lại ngay';
                     const answer = await vscode.window.showInformationMessage(
-                        `🎉 Đã cập nhật Antigravity Cockpit lên ${targetTag} thành công!`,
+                        `🎉 Đã cập nhật Antigravity YangDvu lên ${targetTag} thành công!`,
                         reloadAction,
                     );
 
