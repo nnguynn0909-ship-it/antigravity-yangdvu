@@ -478,11 +478,20 @@ export class CockpitHUD {
             const groups = cache ? this.convertGroups(cache.snapshot) : [];
             const availableAICredits = cache ? this.resolveAvailableAICredits(cache.snapshot) : null;
 
+            let tier = account.tier || '';
+            if (!tier && cache?.snapshot?.userInfo) {
+                const uInfo = cache.snapshot.userInfo;
+                const uTier = uInfo.userTierId || uInfo.plan?.userTier || uInfo.paidTier?.id || uInfo.tier;
+                if (uTier) {
+                    tier = String(uTier).toLowerCase().includes('pro') ? 'PRO' : String(uTier);
+                }
+            }
+
             accountsList.push({
                 email,
                 isCurrent: account.isCurrent,
                 hasDeviceBound: account.hasDeviceBound,
-                tier: account.tier || '',
+                tier,
                 loading,
                 error,
                 lastUpdated,
