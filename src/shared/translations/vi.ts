@@ -15,7 +15,7 @@ export const vi = {
     'statusBar.tooltip': 'Nhấn để mở Giám sát hạn mức',
 
     // Bảng điều khiển
-    'dashboard.title': 'Giám sát hạn mức Antigravity',
+    'dashboard.title': 'Giám sát hạn mức Antigravity YangDvu',
     'dashboard.connecting': 'Đang kết nối...',
     'Connecting...': 'Đang kết nối...',
     'dashboard.offline': 'Hệ thống ngoại tuyến',
@@ -479,9 +479,9 @@ export const vi = {
     'autoTrigger.maxOutputTokensHint':
         'Mặc định 0 (không giới hạn). Giá trị lớn hơn nghĩa là phản hồi dài hơn và tiêu tốn nhiều token hơn.',
     'autoTrigger.enableRiskWarning':
-        '⚠️ Risk warning\nPlugin wake-up has risk-control risk (Cloud Code direct calls).\nWe recommend using Cockpit Tools desktop first (same link path as the official client).\n\nPlugin wake-up currently uses Cloud Code direct calls for conversation wake-up. Google has recently tightened risk controls for this behavior. In theory, low-frequency wake-up is unlikely to trigger risk control, but you still need to understand and evaluate the risk yourself.\n\nCockpit Tools desktop uses "Local Gateway + Official Language Server Protocol" (StartCascade / SendUserCascadeMessage / GetCascadeTrajectory / DeleteCascadeTrajectory). The link is consistent with the official client, with theoretically lower risk and better stability.\nIt also supports batch account verification (such as 403 scenarios), wake-up task management, and the latest Gemini 3.1 Pro related models.\n\nNew wake-up capabilities require Cockpit Tools desktop v0.9.0 or later.\nClick "Open Cockpit Tools (Recommended)" to try launching desktop automatically; if not installed or version is below requirement, it will automatically redirect to the download page.\n\nContinue using plugin wake-up?\nWe recommend switching to Cockpit Tools desktop.',
-    'autoTrigger.openCockpitToolsRecommended': 'Open Cockpit Tools (Recommended)',
-    'autoTrigger.continuePluginWakeup': 'Continue with Plugin Wake-up',
+        '⚠️ Cảnh báo rủi ro\nTính năng đánh thức qua tiện ích có thể kích hoạt cơ chế kiểm soát rủi ro từ Google (gọi trực tiếp Cloud Code).\nBạn nên cân nhắc sử dụng phiên bản ứng dụng chạy nền.\n\nTiếp tục sử dụng tính năng đánh thức qua tiện ích?',
+    'autoTrigger.openCockpitToolsRecommended': 'Mở ứng dụng bổ trợ (Khuyên dùng)',
+    'autoTrigger.continuePluginWakeup': 'Tiếp tục dùng tiện ích',
 
     // Chính sách cửa sổ thời gian
     'autoTrigger.timeWindowEnabled': 'Bật chính sách cửa sổ thời gian',
@@ -663,13 +663,13 @@ export const vi = {
     'accountTree.noAccounts': 'Không có tài khoản',
     'accountTree.notImported': 'Tài khoản chưa được nhập vào plugin',
     'accountTree.noQuotaData': 'Không có dữ liệu hạn mức',
-    'accountTree.cockpitToolsNotRunning': 'Cockpit Tools không hoạt động, không thể chuyển tài khoản',
-    'accountTree.launchCockpitTools': 'Khởi chạy Cockpit Tools',
-    'accountTree.downloadCockpitTools': 'Tải xuống Cockpit Tools',
+    'accountTree.cockpitToolsNotRunning': 'Ứng dụng hỗ trợ không hoạt động, không thể chuyển tài khoản',
+    'accountTree.launchCockpitTools': 'Khởi chạy ứng dụng hỗ trợ',
+    'accountTree.downloadCockpitTools': 'Tải ứng dụng hỗ trợ',
     'accountTree.cannotGetAccountId': 'Không thể lấy ID tài khoản, vui lòng làm mới và thử lại',
     'accountTree.switchingTo': 'Đang chuyển sang tài khoản: {email}\nAntigravity sẽ khởi động lại...',
     'accountTree.sendSwitchFailed': 'Gửi yêu cầu chuyển đổi thất bại',
-    'accountTree.cannotOpenCockpitTools': 'Không thể mở Cockpit Tools, vui lòng khởi chạy thủ công',
+    'accountTree.cannotOpenCockpitTools': 'Không thể mở ứng dụng hỗ trợ, vui lòng khởi chạy thủ công',
     'accountTree.tooltipEmail': 'Email',
     'accountTree.tooltipModelId': 'ID mô hình',
     'antigravityToolsSync.manualImportTitle': 'Nhập JSON thủ công',
@@ -779,7 +779,7 @@ export const vi = {
     'accountsOverview.tokenPlaceholder': 'Dán refresh_token hoặc mảng JSON',
     'accountsOverview.tokenImportStart': 'Bắt đầu nhập',
     'accountsOverview.importFromExtension': 'Nhập từ Tiện ích mở rộng',
-    'accountsOverview.importFromExtensionDesc': 'Đồng bộ tài khoản Cockpit Tools',
+    'accountsOverview.importFromExtensionDesc': 'Đồng bộ tài khoản đã lưu',
     'accountsOverview.importFromLocal': 'Nhập từ DB cục bộ',
     'accountsOverview.importFromLocalDesc': 'Đọc tài khoản đăng nhập Antigravity cục bộ',
     'accountsOverview.importFromTools': 'Nhập Antigravity Tools',
