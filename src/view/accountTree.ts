@@ -161,8 +161,8 @@ export class ToolsStatusNode extends vscode.TreeItem {
             online ? new vscode.ThemeColor('charts.green') : new vscode.ThemeColor('errorForeground'),
         );
         this.tooltip = online
-            ? 'Cockpit Tools WebSocket: Connected'
-            : 'Cockpit Tools WebSocket: Disconnected';
+            ? 'YangDvu Tools: Connected'
+            : 'YangDvu Tools: Disconnected';
         this.contextValue = online ? 'toolsOnline' : 'toolsOffline';
     }
 }
