@@ -41,6 +41,12 @@
         "icon": "$(rocket)"
       },
       {
+        "command": "agCockpit.checkUpdate",
+        "title": "Kiểm Tra Bản Cập Nhật Mới (YangDvu)",
+        "category": "Antigravity",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "agCockpit.refresh",
         "title": "Làm Mới Dữ Liệu Hạn Mức",
         "category": "Antigravity",
