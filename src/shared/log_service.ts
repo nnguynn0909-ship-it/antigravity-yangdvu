@@ -37,7 +37,7 @@ class Logger {
             return;
         }
         
-        this.outputChannel = vscode.window.createOutputChannel('Antigravity Cockpit');
+        this.outputChannel = vscode.window.createOutputChannel('Antigravity YangDvu');
         this.isInitialized = true;
 
         // 监听配置变化（保存 Disposable 以便清理）
