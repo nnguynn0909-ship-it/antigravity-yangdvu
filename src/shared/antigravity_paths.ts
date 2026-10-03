@@ -131,7 +131,20 @@ export function isAntigravityWslRemote(): boolean {
 
 export function getCockpitToolsSharedDir(): string {
     const baseDir = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
-    return path.join(baseDir, 'AntigravityCockpitPrivate');
+    const newDir = path.join(baseDir, 'AntigravityYangDvuPrivate');
+    const oldDir = path.join(baseDir, 'AntigravityCockpitPrivate');
+    try {
+        if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+            fs.mkdirSync(newDir, { recursive: true });
+            const files = fs.readdirSync(oldDir);
+            for (const file of files) {
+                fs.copyFileSync(path.join(oldDir, file), path.join(newDir, file));
+            }
+        }
+    } catch {
+        // ignore copy errors
+    }
+    return fs.existsSync(newDir) ? newDir : oldDir;
 }
 
 export function getAntigravityStateDbPath(): string {
