@@ -45,34 +45,34 @@
 
 ---
 
-## 🛠️ Hướng Dẫn Cài Đặt Dành Cho Người Dùng Mới (Chỉ 30 Giây)
+## 🛠️ Hướng Dẫn Cài Đặt Dành Cho Người Dùng Mới (Chỉ 1 Bước)
 
-Không cần tìm kiếm trên chợ extension, bất kỳ ai chỉ cần có link GitHub này là có thể cài đặt trực tiếp vào **Antigravity IDE** hoặc **VS Code** rất dễ dàng:
+Không cần tìm kiếm trên chợ extension, bất kỳ ai cũng có thể cài đặt trực tiếp vào **Antigravity IDE** hoặc **VS Code** rất dễ dàng:
 
-### 📥 Bước 1: Tải tệp cài đặt `.vsix`
-* 👉 **[Bấm vào đây để tải ngay: antigravity-yangdvu-1.0.0.vsix](https://github.com/nnguynn0909-ship-it/antigravity-yangdvu/releases/download/v1.0.0/antigravity-yangdvu-1.0.0.vsix)**  
-*(Hoặc vào mục [Releases](https://github.com/nnguynn0909-ship-it/antigravity-yangdvu/releases/tag/v1.0.0) để tải)*
+### ⚡ Cách 1: Cài đặt siêu tốc bằng CMD / Terminal (Khuyên dùng - 1 Dòng Lệnh)
+
+Chỉ cần mở **CMD (Command Prompt)** hoặc **PowerShell** trên máy tính, dán đoạn mã ngắn dưới đây và nhấn `Enter` là tiện ích tự động tải và cài đặt xong 100%:
+
+* **Dành cho CMD (Command Prompt):**
+```cmd
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/nnguynn0909-ship-it/antigravity-yangdvu/main/install.ps1 | iex"
+```
+
+* **Dành cho PowerShell:**
+```powershell
+irm https://raw.githubusercontent.com/nnguynn0909-ship-it/antigravity-yangdvu/main/install.ps1 | iex
+```
+
+> 💡 *Lệnh trên sẽ tự động kết nối GitHub lấy phiên bản mới nhất, tải về và cài đặt trực tiếp vào Antigravity IDE hoặc VS Code của bạn.*
 
 ---
 
-### 💻 Bước 2: Cài vào Antigravity IDE hoặc VS Code (Chọn 1 trong 3 cách sau)
+### 📦 Cách 2: Cài đặt thủ công bằng tệp `.vsix`
 
-* **Cách 1: Kéo thả chuột (Dễ nhất)**
-  1. Mở **Antigravity IDE** hoặc **VS Code**.
-  2. Kéo tệp `antigravity-yangdvu-1.0.0.vsix` vừa tải về và thả thẳng vào cửa sổ IDE -> Tiện ích sẽ tự động được cài đặt ngay lập tức!
-
-* **Cách 2: Cài qua menu giao diện**
-  1. Mở IDE, bấm tổ hợp phím `Ctrl + Shift + X` (mở tab Extensions).
-  2. Nhấp vào biểu tượng **dấu 3 chấm `...`** ở góc trên bên phải của tab Extensions.
-  3. Chọn **"Install from VSIX..."** (Cài đặt từ VSIX).
-  4. Chọn tệp `antigravity-yangdvu-1.0.0.vsix` đã tải.
-
-* **Cách 3: Cài bằng Terminal (Dành cho Dev)**
-  Mở Terminal và chạy lệnh:
-  ```bash
-  antigravity-ide --install-extension "antigravity-yangdvu-1.0.0.vsix" --force
-  ```
-  *(Nếu dùng VS Code thường: thay `antigravity-ide` bằng `code`)*
+1. 👉 **[Bấm vào đây để tải tệp cài đặt: antigravity-yangdvu-1.0.0.vsix](https://github.com/nnguynn0909-ship-it/antigravity-yangdvu/releases/latest)**  
+   *(Hoặc vào mục [Releases](https://github.com/nnguynn0909-ship-it/antigravity-yangdvu/releases) để tải)*
+2. Mở **Antigravity IDE** hoặc **VS Code**, kéo tệp `.vsix` vừa tải về và thả thẳng vào cửa sổ IDE -> Tiện ích sẽ tự động được cài đặt ngay lập tức!  
+   *(Hoặc bấm `Ctrl + Shift + X` -> biểu tượng dấu 3 chấm `...` ở góc trên tab Extensions -> chọn **Install from VSIX...**)*
 
 ---
 
