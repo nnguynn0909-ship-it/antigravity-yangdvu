@@ -16,7 +16,7 @@ Tất cả các thay đổi đáng chú ý của tiện ích mở rộng **Antig
   - Biên dịch toàn bộ giao diện bảng điều khiển (Dashboard), bảng tổng quan tài khoản (Accounts Overview), thanh trạng thái (Status Bar) và toàn bộ thiết lập cấu hình sang Tiếng Việt chuẩn xác.
   - Loại bỏ hoàn toàn tất cả tệp ngôn ngữ và tài liệu không cần thiết, loại bỏ triệt để các thông báo pop-up quảng cáo từ bên thứ ba.
 - **Bảo mật tuyệt đối (100% Local Private):**
-  - Chuyển hướng lưu trữ dữ liệu sang thư mục riêng biệt tại máy cục bộ (`AppData/AntigravityCockpitPrivate`).
+  - Chuyển hướng lưu trữ dữ liệu sang thư mục riêng biệt tại máy cục bộ (`AppData/AntigravityYangDvuPrivate`).
   - Vô hiệu hóa việc truyền `refresh_token` qua kết nối mạng hoặc WebSocket trung gian, đảm bảo an toàn tối đa cho tài khoản Google của bạn.
   - Tích hợp cơ chế bảo vệ mã hóa thông tin xác thực chống bị quét lộ lọt trên các nền tảng lưu trữ mã nguồn.
 - **Chuyển đổi tài khoản mượt mà (Seamless Account Switching):**
