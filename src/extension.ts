@@ -25,6 +25,7 @@ import { autoTriggerController } from './auto_trigger/controller';
 import { credentialStorage } from './auto_trigger';
 import { debugLocalCredentialImport } from './auto_trigger/local_auth_importer';
 import { announcementService } from './announcement';
+import { updateService } from './services/updateService';
 
 // Account Tree View
 import { AccountTreeProvider, registerAccountTreeCommands } from './view/accountTree';
@@ -212,6 +213,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // 初始化公告服务
     announcementService.initialize(context);
+
+    // Khởi tạo dịch vụ kiểm tra cập nhật tự động (YangDvu)
+    updateService.initialize(context);
 
     // 初始化 Account Tree View
     const accountTreeProvider = new AccountTreeProvider(accountsRefreshService);
