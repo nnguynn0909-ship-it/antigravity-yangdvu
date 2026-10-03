@@ -120,7 +120,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await context.globalState.update('state.lastVersion', version);
     }
 
-    logger.info(`Antigravity Cockpit v${version} - Systems Online`);
+    logger.info(`Antigravity YangDvu v${version} - Systems Online`);
 
     // 初始化核心模块
     hunter = new ProcessHunter();
@@ -454,7 +454,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // 启动系统
     await bootSystems();
 
-    logger.info('Antigravity Cockpit Fully Operational');
+    logger.info('Antigravity YangDvu Fully Operational');
 }
 
 function logOfficialAntigravityIdeVersion(): void {
@@ -638,7 +638,7 @@ function handleOfflineState(): void {
  * 扩展停用
  */
 export async function deactivate(): Promise<void> {
-    logger.info('Antigravity Cockpit: Shutting down...');
+    logger.info('Antigravity YangDvu: Shutting down...');
 
     // 断开 WebSocket 连接
     cockpitToolsWs.disconnect();
